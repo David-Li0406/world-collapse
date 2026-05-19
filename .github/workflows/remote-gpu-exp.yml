@@ -1,0 +1,43 @@
+name: remote-gpu-exp
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: "Config path"
+        required: true
+        default: "configs/debug.yaml"
+      run_name:
+        description: "Run name"
+        required: true
+        default: "debug"
+
+jobs:
+  run:
+    runs-on: [self-hosted, Linux, X64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check machine
+        run: |
+          hostname
+          nvidia-smi || true
+
+      - name: Run experiment
+        run: |
+          mkdir -p runs/${{ inputs.run_name }}
+          python train.py \
+            --config "${{ inputs.config }}" \
+            --output_dir "runs/${{ inputs.run_name }}" \
+            2>&1 | tee "runs/${{ inputs.run_name }}/train.log"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.run_name }}
+          path: |
+            runs/${{ inputs.run_name }}/train.log
+            runs/${{ inputs.run_name }}/metrics.json
+            runs/${{ inputs.run_name }}/**
