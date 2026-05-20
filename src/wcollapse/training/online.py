@@ -36,11 +36,8 @@ from wcollapse.models.critic import Critic
 from wcollapse.models.ivideogpt_wrapper import MiniWorldModel
 from wcollapse.models.reward_head import RewardHead
 from wcollapse.models.semantic_head import SemanticHead
-from wcollapse.training.collection import rollout_actor
-from wcollapse.training.imagination import (
-    build_imagination_optimizers,
-    imagination_step,
-)
+from wcollapse.training.collection import rollout_actor, collect_seed_dataset
+from wcollapse.training.sac import build_sac_optimizers, sac_step
 from wcollapse.utils.checkpoint import save_checkpoint
 from wcollapse.utils.logging import MetricsLogger
 
@@ -93,7 +90,7 @@ def online_loop(
     wm_opt = torch.optim.AdamW(world_model.parameters(), lr=float(cfg.lr_wm))
     rew_opt = torch.optim.AdamW(reward_head.parameters(), lr=float(cfg.lr_head))
     sem_opt = torch.optim.AdamW(semantic_head.parameters(), lr=float(cfg.lr_head))
-    imag_opts = build_imagination_optimizers(actor, critic, cfg)
+    sac_opts = build_sac_optimizers(actor, critic, cfg, device)
 
     active_buffer = make_active_buffer(pretrain_buffer, condition, cfg)
 
@@ -115,6 +112,24 @@ def online_loop(
         output_dir / "ckpts" / "wm_M0.pt",
         world_model=world_model,
     )
+
+    # Optional seed phase: random + scripted rollouts so SAC has off-policy
+    # diversity before the first agent update. iVideoGPT mbrl uses
+    # num_seed_frames=4000; we scale this to a small number of episodes.
+    seed_episodes = int(cfg.get("seed_episodes", 0))
+    if seed_episodes > 0:
+        print(f"[online] seed phase: collecting {seed_episodes} scripted+random episodes", flush=True)
+        seed_trajs = collect_seed_dataset(
+            env=env,
+            n_episodes=seed_episodes,
+            scripted_fraction=0.5,
+            scripted_noise=float(cfg.get("seed_noise", 0.5)),
+            goal_subregion=trained_subregion if bool(cfg.bias_goal) else None,
+            seed=int(cfg.get("seed", 0)) + 7777,
+        )
+        for tr in seed_trajs:
+            active_buffer.add_trajectory(tr)
+            pretrain_buffer.add_trajectory(tr)
 
     for it in range(int(cfg.iterations)):
         # 1) collect real trajectories with the current actor on the trained subregion
@@ -187,18 +202,22 @@ def online_loop(
                 "semantic_mse": float(sem_loss.item()),
             }
 
-        # 4) actor-critic on imagined latent rollouts
-        imag_metrics: dict[str, float] = {}
+        # 4) actor + twin-Q critic via SAC. Mixes real transitions from the
+        #    active buffer with short-horizon imagined transitions from the
+        #    WM (MBPO recipe — see iVideoGPT/mbrl/train_metaworld_mbpo.py).
+        sac_metrics: dict[str, float] = {}
+        use_imag = bool(cfg.get("use_imagination", True))
         for _ in range(int(cfg.actor_steps)):
-            imag_metrics = imagination_step(
+            sac_metrics = sac_step(
                 world_model=world_model,
                 reward_head=reward_head,
                 actor=actor,
                 critic=critic,
-                opts=imag_opts,
+                opts=sac_opts,
                 buffer=active_buffer,
                 cfg=cfg,
                 device=device,
+                use_imagination=use_imag,
             )
 
         # 5) periodic evaluation
@@ -232,7 +251,7 @@ def online_loop(
             metrics = {
                 **wm_metrics,
                 **head_metrics,
-                **imag_metrics,
+                **sac_metrics,
                 **{f"cov/{k}": v for k, v in coverage["scalar"].items()},
                 **{f"wm/{k}": v for k, v in wm_eval.items()},
                 **{f"beh/{k}": v for k, v in behavior.items()},

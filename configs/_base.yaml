@@ -44,23 +44,37 @@ online:
   collect_episodes: 4
   exploration_noise: 0.1
   bias_goal: true
-  recent_window: 4000
+  recent_window: 8000
+
+  # Seed phase: scripted+random rollouts before any agent updates, giving SAC
+  # off-policy data with reward signal. Modeled on iVideoGPT mbrl's
+  # num_seed_frames=4000 (with action_repeat=2 → 2000 actions ≈ 10 episodes
+  # at our episode length 200).
+  seed_episodes: 20
+  seed_noise: 0.5
 
   wm_steps: 40
   head_steps: 15
-  actor_steps: 40
+  actor_steps: 80                  # SAC needs more updates than REINFORCE imag did
 
-  batch_size: 16
+  batch_size: 128
   lr_wm: 3.0e-4
   lr_head: 1.0e-3
   lr_actor: 3.0e-4
   lr_critic: 3.0e-4
+  lr_alpha: 1.0e-4
   ema_tau: 0.005
 
-  imag_horizon: 10
+  # MBPO mixing: real_ratio of the batch is real, the rest is imagined under
+  # the WM. With mbpo_imag_horizon=1 each imagined transition is a one-step
+  # rollout from a real start state (cheap, low compounding error).
+  use_imagination: true
+  real_ratio: 0.5
+  mbpo_imag_horizon: 1
+  init_alpha: 0.2
+  target_entropy: -4               # = -|A| for our 4-d continuous action
+
   gamma: 0.99
-  lambda_: 0.95
-  entropy_coef: 1.0e-3
 
   eval_every: 5
   n_eval_episodes: 10
@@ -68,3 +82,5 @@ online:
   coverage_bins: 20
   density_floor: 1.0e-4
   visited_percentile: 50
+  visited_radius: 0.05
+  static_goal_split: 0.0

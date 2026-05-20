@@ -43,21 +43,28 @@ online:
   bias_goal: true
   recent_window: 400
 
+  seed_episodes: 2
+  seed_noise: 0.5
+
   wm_steps: 5
   head_steps: 3
-  actor_steps: 5
+  actor_steps: 8
 
-  batch_size: 4
+  batch_size: 16
   lr_wm: 3.0e-4
   lr_head: 1.0e-3
   lr_actor: 3.0e-4
   lr_critic: 3.0e-4
+  lr_alpha: 1.0e-4
   ema_tau: 0.01
 
-  imag_horizon: 4
+  use_imagination: true
+  real_ratio: 0.5
+  mbpo_imag_horizon: 1
+  init_alpha: 0.2
+  target_entropy: -4
+
   gamma: 0.95
-  lambda_: 0.9
-  entropy_coef: 1.0e-3
 
   eval_every: 1
   n_eval_episodes: 2
@@ -65,3 +72,5 @@ online:
   coverage_bins: 8
   density_floor: 1.0e-4
   visited_percentile: 50
+  visited_radius: 0.05
+  static_goal_split: 0.0
