@@ -22,6 +22,25 @@ from wcollapse.data.probe_bank import ProbeBank
 _BINS_DEFAULT = 20
 _DENSITY_FLOOR_DEFAULT = 1e-4
 _VISITED_PERCENTILE_DEFAULT = 50.0
+_VISITED_RADIUS_DEFAULT = 0.05         # meters in (obj_x, obj_y, goal_x) space
+_STATIC_GOAL_SPLIT_DEFAULT = 0.0       # probes with goal_x < this are "trained subregion"
+
+
+def _count_within_radius(probe_pts: np.ndarray, actor_pts: np.ndarray, radius: float) -> np.ndarray:
+    """For each probe point, count actor points within ``radius`` (Euclidean).
+
+    Returns (P,) int array. Chunked to bound memory if N is large.
+    """
+    if probe_pts.size == 0 or actor_pts.size == 0:
+        return np.zeros(len(probe_pts), dtype=np.int64)
+    r2 = radius * radius
+    out = np.zeros(probe_pts.shape[0], dtype=np.int64)
+    chunk = max(1, 1_000_000 // max(1, actor_pts.shape[0]))
+    for i in range(0, probe_pts.shape[0], chunk):
+        diff = probe_pts[i : i + chunk, None, :] - actor_pts[None, :, :]
+        sq = (diff * diff).sum(-1)
+        out[i : i + chunk] = (sq < r2).sum(-1)
+    return out
 
 
 def _collect_semantic_points(buffer: ReplayBuffer, recent_only: bool) -> np.ndarray:
@@ -102,14 +121,25 @@ def coverage_metrics(
 
     if ref_points.size == 0:
         # No data yet — return zeros so the loop can keep going.
+        empty_mask = np.zeros(len(probe_bank), dtype=bool)
+        if len(probe_bank) > 0:
+            goal_xs = np.array([p.gt_semantic[0, 6] for p in probe_bank.probes], dtype=np.float32)
+            static_mask = goal_xs < float(cfg.get("static_goal_split", _STATIC_GOAL_SPLIT_DEFAULT))
+        else:
+            static_mask = empty_mask.copy()
         return {
             "scalar": {
                 "visitation_entropy": 0.0,
                 "support_gap": 0.0,
                 "n_ref_points": 0,
                 "n_cur_points": int(cur_points.shape[0]),
+                "n_visited_probes": 0,
+                "n_underv_probes": int(len(probe_bank)),
+                "n_visited_static": int(static_mask.sum()),
+                "n_underv_static": int((~static_mask).sum()),
             },
-            "visited_mask": np.ones(len(probe_bank), dtype=bool),
+            "visited_mask": empty_mask,
+            "static_visited_mask": static_mask,
             "density_ref": np.zeros((bins, bins, bins), dtype=np.float32),
             "density_cur": np.zeros((bins, bins, bins), dtype=np.float32),
         }
@@ -131,26 +161,32 @@ def coverage_metrics(
         forgotten = (s_ref & ~s_cur).sum()
         support_gap = float(forgotten) / float(s_ref.sum())
 
-    # Per-probe density under the current policy density.
-    probe_pts = np.stack(
-        [[float(p.start.qpos[9 + 0]) if p.start.qpos.shape[0] >= 12 else 0.0,
-          float(p.start.qpos[9 + 1]) if p.start.qpos.shape[0] >= 12 else 0.0,
-          float(p.start.target_pos[0])] for p in probe_bank.probes],
-        dtype=np.float32,
-    ).reshape(-1, 3) if len(probe_bank) > 0 else np.zeros((0, 3), dtype=np.float32)
-    # NOTE: object qpos indices for push-v3 are at qpos[9:12] (see _set_obj_xyz);
-    # falling back to gt_semantic is safer.
-    probe_pts = np.stack(
-        [p.gt_semantic[0, [3, 4, 6]] for p in probe_bank.probes],
-        dtype=np.float32,
-    ) if len(probe_bank) > 0 else np.zeros((0, 3), dtype=np.float32)
+    # Per-probe partition: visited iff there exists a recent-actor semantic
+    # point within `visited_radius` of the probe's start state in (obj_x,
+    # obj_y, goal_x) space. This is robust to sparse density (e.g., narrow
+    # goal-biased collection), unlike the prior bin-density percentile that
+    # degenerated to "no probes visited" whenever the actor's support didn't
+    # overlap a probe's exact grid cell.
+    probe_pts = (
+        np.stack([p.gt_semantic[0, [3, 4, 6]] for p in probe_bank.probes], axis=0).astype(np.float32)
+        if len(probe_bank) > 0
+        else np.zeros((0, 3), dtype=np.float32)
+    )
+    radius = float(cfg.get("visited_radius", _VISITED_RADIUS_DEFAULT))
+    counts = _count_within_radius(probe_pts, cur_points, radius)
+    visited_mask = counts > 0
 
-    densities = _density_at(probe_pts, p_cur, lo, hi, bins)
-    if densities.size > 0:
-        thresh = np.percentile(densities, visited_pct)
-        visited_mask = densities > thresh
+    # Static partition: probes whose initial goal-x sign matches the trained
+    # subregion (goal_x < threshold). Independent of any live buffer state,
+    # so it captures the experimental design (goal-biased collection) even
+    # when the actor hasn't learned to concentrate. We report both, and
+    # downstream metrics expose visited/under-visited under each definition.
+    goal_split = float(cfg.get("static_goal_split", _STATIC_GOAL_SPLIT_DEFAULT))
+    if len(probe_bank) > 0:
+        goal_xs = np.array([p.gt_semantic[0, 6] for p in probe_bank.probes], dtype=np.float32)
+        static_visited_mask = goal_xs < goal_split
     else:
-        visited_mask = np.zeros((0,), dtype=bool)
+        static_visited_mask = np.zeros((0,), dtype=bool)
 
     return {
         "scalar": {
@@ -160,8 +196,12 @@ def coverage_metrics(
             "n_cur_points": int(cur_points.shape[0]),
             "n_visited_probes": int(visited_mask.sum()),
             "n_underv_probes": int((~visited_mask).sum()),
+            "n_visited_static": int(static_visited_mask.sum()),
+            "n_underv_static": int((~static_visited_mask).sum()),
+            "visited_radius": radius,
         },
         "visited_mask": visited_mask,
+        "static_visited_mask": static_visited_mask,
         "density_ref": p_ref,
         "density_cur": p_cur,
     }

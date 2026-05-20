@@ -217,6 +217,7 @@ def online_loop(
                 device=device,
                 cfg=cfg,
                 visited_mask=coverage["visited_mask"],
+                static_visited_mask=coverage.get("static_visited_mask"),
             )
             behavior = goal_shift_eval(
                 env=env,

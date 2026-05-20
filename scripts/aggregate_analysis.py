@@ -149,17 +149,23 @@ def figure1_visitation(runs_by_cond: dict[str, list[Path]], out: Path) -> None:
     plt.close(fig)
 
 
-def figure2_probe_error(runs_by_cond: dict[str, list[Path]], out: Path) -> None:
+def figure2_probe_error(runs_by_cond: dict[str, list[Path]], out: Path, partition: str = "dynamic") -> None:
+    """partition: 'dynamic' uses wm/sem_err_h{h}_{visited,underv} (policy-density);
+    'static' uses wm/sem_err_h{h}_static_{visited,underv} (goal-region sign)."""
     horizons = (1, 5, 10, 15)
+    suffix_v = "visited" if partition == "dynamic" else "static_visited"
+    suffix_u = "underv" if partition == "dynamic" else "static_underv"
     fig, axes = plt.subplots(1, len(horizons), figsize=(4.2 * len(horizons), 4), sharey=True)
     for ax, h in zip(axes, horizons):
-        _plot_curve(ax, runs_by_cond, f"wm/sem_err_h{h}_visited", linestyle="-")
-        _plot_curve(ax, runs_by_cond, f"wm/sem_err_h{h}_underv", linestyle="--")
+        _plot_curve(ax, runs_by_cond, f"wm/sem_err_h{h}_{suffix_v}", linestyle="-")
+        _plot_curve(ax, runs_by_cond, f"wm/sem_err_h{h}_{suffix_u}", linestyle="--")
         ax.set_title(f"horizon H={h}")
         ax.set_xlabel("online iteration")
-    axes[0].set_ylabel("semantic L2 error\n(solid = visited probes, dashed = under-visited)")
+    axes[0].set_ylabel(
+        f"semantic L2 error\n(solid = {suffix_v.replace('_', ' ')}, dashed = {suffix_u.replace('_', ' ')})"
+    )
     axes[0].legend(fontsize=7, loc="upper left")
-    fig.suptitle("Figure 2 — fixed-probe semantic rollout error", fontsize=11)
+    fig.suptitle(f"Figure 2 — fixed-probe semantic rollout error ({partition} partition)", fontsize=11)
     fig.tight_layout()
     fig.savefig(out, dpi=160)
     plt.close(fig)
@@ -181,17 +187,18 @@ def figure4_goal_shift(runs_by_cond: dict[str, list[Path]], out: Path) -> None:
     plt.close(fig)
 
 
-def figure5_off_support_gap(runs_by_cond: dict[str, list[Path]], out: Path) -> None:
+def figure5_off_support_gap(runs_by_cond: dict[str, list[Path]], out: Path, partition: str = "dynamic") -> None:
     horizons = (1, 5, 10, 15)
+    gap_key = "wm/gap_h{}" if partition == "dynamic" else "wm/static_gap_h{}"
     fig, axes = plt.subplots(1, len(horizons), figsize=(4.2 * len(horizons), 4), sharey=True)
     for ax, h in zip(axes, horizons):
-        _plot_curve(ax, runs_by_cond, f"wm/gap_h{h}")
+        _plot_curve(ax, runs_by_cond, gap_key.format(h))
         ax.axhline(0.0, color="k", linewidth=0.5, alpha=0.5)
         ax.set_title(f"horizon H={h}")
         ax.set_xlabel("online iteration")
     axes[0].set_ylabel("Gap_H = E_out[err] − E_in[err]")
     axes[0].legend(fontsize=8, loc="upper left")
-    fig.suptitle("Figure 5 — off-support generalization gap", fontsize=11)
+    fig.suptitle(f"Figure 5 — off-support generalization gap ({partition} partition)", fontsize=11)
     fig.tight_layout()
     fig.savefig(out, dpi=160)
     plt.close(fig)
@@ -306,9 +313,11 @@ def main() -> None:
     runs_by_cond = {c: [p for _, p in items] for c, items in found.items()}
 
     figure1_visitation(runs_by_cond, args.out_dir / "figure1_visitation.png")
-    figure2_probe_error(runs_by_cond, args.out_dir / "figure2_probe_error.png")
+    figure2_probe_error(runs_by_cond, args.out_dir / "figure2_probe_error_dynamic.png", partition="dynamic")
+    figure2_probe_error(runs_by_cond, args.out_dir / "figure2_probe_error_static.png", partition="static")
     figure4_goal_shift(runs_by_cond, args.out_dir / "figure4_goal_shift.png")
-    figure5_off_support_gap(runs_by_cond, args.out_dir / "figure5_off_support_gap.png")
+    figure5_off_support_gap(runs_by_cond, args.out_dir / "figure5_off_support_gap_dynamic.png", partition="dynamic")
+    figure5_off_support_gap(runs_by_cond, args.out_dir / "figure5_off_support_gap_static.png", partition="static")
 
     summary = _per_condition_summary(runs_by_cond)
     write_summary(summary, args.out_dir / "collapse_signature.md")

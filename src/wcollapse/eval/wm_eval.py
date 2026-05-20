@@ -61,6 +61,12 @@ def _semantic_errors(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
     return np.linalg.norm(pred - gt, axis=-1)
 
 
+def _aggregate_under_mask(err_h: np.ndarray, mask: np.ndarray) -> float:
+    if mask.size == 0 or not mask.any():
+        return float("nan")
+    return float(err_h[mask].mean())
+
+
 def probe_eval(
     world_model: MiniWorldModel,
     semantic_head: SemanticHead,
@@ -69,20 +75,28 @@ def probe_eval(
     device: torch.device,
     cfg: DictConfig,
     visited_mask: np.ndarray,
+    static_visited_mask: np.ndarray | None = None,
 ) -> dict[str, float]:
-    """Compute semantic rollout error + forgetting + off-support gap."""
+    """Compute semantic rollout error + forgetting + off-support gap under
+    BOTH the dynamic (policy-density) partition and the static (goal-region)
+    partition. Logging keys are prefixed accordingly so downstream analysis
+    can compare definitions side-by-side.
+    """
     H = probe_bank.horizon
     horizons = [h for h in (1, 5, 10, 15) if h <= H]
 
-    gt = np.stack([p.gt_semantic for p in probe_bank.probes], axis=0) if len(probe_bank) else np.zeros((0, H + 1, 11), dtype=np.float32)
+    gt = (
+        np.stack([p.gt_semantic for p in probe_bank.probes], axis=0)
+        if len(probe_bank)
+        else np.zeros((0, H + 1, 11), dtype=np.float32)
+    )
     pred = _predict_semantic_rollout(world_model, semantic_head, probe_bank, device)
     err = _semantic_errors(pred, gt)  # (N, H+1)
 
     # Forgetting score: same metric under the post-pretrain M_0 WM.
     # We share the current semantic_head — we want to isolate WM drift, not
-    # head drift. (If the head also drifts, that's part of the system's
-    # forgetting; it's fine to attribute jointly.) Route through build_world_model
-    # so the M_0 instance matches whichever backbone the active config uses.
+    # head drift. Route through build_world_model so the M_0 instance matches
+    # whichever backbone the active config uses.
     M0 = build_world_model(world_model.cfg).to(device)
     state = load_checkpoint(wm_baseline_path, map_location=str(device))
     M0.load_state_dict(state["world_model"])
@@ -90,31 +104,42 @@ def probe_eval(
     err_0 = _semantic_errors(pred_0, gt)
     forgetting = err - err_0  # positive = current WM is worse than M_0
 
-    out: dict[str, float] = {}
+    out: dict[str, float] = {"probe_count": float(len(probe_bank))}
     if len(probe_bank) == 0:
-        out["probe_count"] = 0
-        for h in horizons:
-            out[f"sem_err_h{h}_overall"] = 0.0
-            out[f"sem_err_h{h}_visited"] = 0.0
-            out[f"sem_err_h{h}_underv"] = 0.0
-            out[f"forget_h{h}_overall"] = 0.0
-            out[f"forget_h{h}_underv"] = 0.0
-            out[f"gap_h{h}"] = 0.0
         return out
 
-    # Ensure mask shape matches probe count.
     if visited_mask.size != len(probe_bank):
         visited_mask = np.ones(len(probe_bank), dtype=bool)
+    if static_visited_mask is None or static_visited_mask.size != len(probe_bank):
+        static_visited_mask = np.ones(len(probe_bank), dtype=bool)
 
     for h in horizons:
         err_h = err[:, h]
         forget_h = forgetting[:, h]
         out[f"sem_err_h{h}_overall"] = float(err_h.mean())
-        out[f"sem_err_h{h}_visited"] = float(err_h[visited_mask].mean()) if visited_mask.any() else 0.0
-        out[f"sem_err_h{h}_underv"] = float(err_h[~visited_mask].mean()) if (~visited_mask).any() else 0.0
         out[f"forget_h{h}_overall"] = float(forget_h.mean())
-        out[f"forget_h{h}_underv"] = float(forget_h[~visited_mask].mean()) if (~visited_mask).any() else 0.0
-        out[f"gap_h{h}"] = out[f"sem_err_h{h}_underv"] - out[f"sem_err_h{h}_visited"]
 
-    out["probe_count"] = float(len(probe_bank))
+        # Dynamic policy-density partition (original behavior).
+        out[f"sem_err_h{h}_visited"] = _aggregate_under_mask(err_h, visited_mask)
+        out[f"sem_err_h{h}_underv"] = _aggregate_under_mask(err_h, ~visited_mask)
+        out[f"forget_h{h}_underv"] = _aggregate_under_mask(forget_h, ~visited_mask)
+        v = out[f"sem_err_h{h}_visited"]
+        u = out[f"sem_err_h{h}_underv"]
+        out[f"gap_h{h}"] = (u - v) if (v == v and u == u) else 0.0
+
+        # Static goal-region partition (independent of actor learning).
+        out[f"sem_err_h{h}_static_visited"] = _aggregate_under_mask(err_h, static_visited_mask)
+        out[f"sem_err_h{h}_static_underv"] = _aggregate_under_mask(err_h, ~static_visited_mask)
+        out[f"forget_h{h}_static_underv"] = _aggregate_under_mask(forget_h, ~static_visited_mask)
+        sv = out[f"sem_err_h{h}_static_visited"]
+        su = out[f"sem_err_h{h}_static_underv"]
+        out[f"static_gap_h{h}"] = (su - sv) if (sv == sv and su == su) else 0.0
+
+    # Also save raw per-probe semantic-L2-error vectors at the four horizons,
+    # plus per-probe forgetting, so any future re-partitioning is offline.
+    for h in horizons:
+        out[f"per_probe_err_h{h}"] = err[:, h].astype(float).tolist()
+        out[f"per_probe_forget_h{h}"] = forgetting[:, h].astype(float).tolist()
+    out["per_probe_goal_x"] = [float(p.gt_semantic[0, 6]) for p in probe_bank.probes]
+
     return out
