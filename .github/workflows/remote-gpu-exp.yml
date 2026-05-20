@@ -37,6 +37,17 @@ jobs:
           export UV_CACHE_DIR="$HOME/.cache/uv"
           uv sync --frozen
 
+      - name: Probe render backends
+        run: |
+          echo "--- /dev/dri permissions ---"
+          ls -la /dev/dri 2>&1 || true
+          echo "--- nvidia-smi GPUs ---"
+          nvidia-smi -L 2>&1 || true
+          echo "--- libOSMesa available? ---"
+          ldconfig -p | grep -i osmesa || echo "(none)"
+          echo "--- libEGL available? ---"
+          ldconfig -p | grep -i "libEGL\.so\|libGLX_nvidia" || echo "(none)"
+
       - name: Prepare data
         run: |
           export DATA_ROOT="$HOME/datasets/world-collapse"
@@ -44,8 +55,10 @@ jobs:
           export HF_HOME="$HOME/hf_cache"
           export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
-          export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
-          export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}"
+          # On shared GPU runners /dev/dri/card* is permission-denied, but
+          # NVIDIA EGL devices are usually accessible. Point mujoco at device 0.
+          export MUJOCO_GL="${MUJOCO_GL:-egl}"
+          export MUJOCO_EGL_DEVICE_ID="${MUJOCO_EGL_DEVICE_ID:-0}"
           ./scripts/prepare_data.sh
 
       - name: Run experiment
@@ -54,11 +67,8 @@ jobs:
           export HF_HOME="$HOME/hf_cache"
           export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
-          # GPU runners with locked /dev/dri/card* devices can't use EGL; osmesa
-          # is pure-software rendering so it works in any container without GPU
-          # device permissions. Slower than EGL but reliable.
-          export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
-          export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}"
+          export MUJOCO_GL="${MUJOCO_GL:-egl}"
+          export MUJOCO_EGL_DEVICE_ID="${MUJOCO_EGL_DEVICE_ID:-0}"
 
           mkdir -p "runs/${{ inputs.run_name }}"
           uv run python train.py \
