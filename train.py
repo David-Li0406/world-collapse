@@ -210,24 +210,36 @@ def main() -> None:
     device = torch.device(str(cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu")))
     mode = str(cfg.mode)
 
+    print(f"[train] device={device} mode={mode} condition={cfg.get('condition', '')} task={cfg.env.task}", flush=True)
+
     if mode == "collect_pretrain":
+        print("[train] starting collect_pretrain", flush=True)
         _collect_phase(cfg, output_dir)
     elif mode == "pretrain":
         if not (output_dir / "data" / "d_pre.hdf5").exists():
+            print("[train] starting collect_pretrain", flush=True)
             _collect_phase(cfg, output_dir)
+        print("[train] starting pretrain", flush=True)
         _pretrain_phase(cfg, output_dir, device)
     elif mode == "online":
         if not (output_dir / "data" / "d_pre.hdf5").exists():
+            print("[train] starting collect_pretrain", flush=True)
             _collect_phase(cfg, output_dir)
         if not (output_dir / "ckpts" / "pretrained.pt").exists():
+            print("[train] starting pretrain", flush=True)
             _pretrain_phase(cfg, output_dir, device)
+        print("[train] starting online", flush=True)
         _online_phase(cfg, output_dir, device)
     elif mode in {"full", "debug"}:
+        print("[train] starting collect_pretrain", flush=True)
         _collect_phase(cfg, output_dir)
+        print("[train] starting pretrain", flush=True)
         _pretrain_phase(cfg, output_dir, device)
+        print("[train] starting online", flush=True)
         _online_phase(cfg, output_dir, device)
     else:
         raise ValueError(f"Unknown mode: {mode}")
+    print("[train] all phases complete", flush=True)
 
     # Always try to render plots at the end. Don't fail the whole run if it errors.
     try:

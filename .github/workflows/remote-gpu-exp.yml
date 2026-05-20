@@ -74,6 +74,7 @@ jobs:
           ./scripts/prepare_data.sh
 
       - name: Run experiment
+        shell: bash -eo pipefail {0}
         run: |
           export DATA_ROOT="$HOME/datasets/world-collapse"
           export HF_HOME="$HOME/hf_cache"
@@ -81,9 +82,10 @@ jobs:
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
           export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
           export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}"
+          export PYTHONUNBUFFERED=1
 
           mkdir -p "runs/${{ inputs.run_name }}"
-          uv run python train.py \
+          uv run python -u train.py \
             --config "${{ inputs.config }}" \
             --output_dir "runs/${{ inputs.run_name }}" \
             2>&1 | tee "runs/${{ inputs.run_name }}/train.log"
