@@ -200,9 +200,21 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--output_dir", required=True, type=Path)
+    parser.add_argument(
+        "--override",
+        "-o",
+        action="append",
+        default=[],
+        help=(
+            "OmegaConf dotlist override, repeatable. Example: "
+            "--override seed=1 --override online.iterations=50"
+        ),
+    )
     args = parser.parse_args()
 
     cfg = _load_config(args.config)
+    if args.override:
+        cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(args.override))
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     _snapshot_config(cfg, output_dir, args.config)

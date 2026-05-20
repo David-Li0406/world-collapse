@@ -1,0 +1,115 @@
+name: run-conditions
+
+# Fan out the three condition runs (collapse_prone, frozen_wm, balanced_replay)
+# across N seeds, all in parallel inside a single workflow step. Each (condition,
+# seed) job is pinned to one GPU via CUDA_VISIBLE_DEVICES. Inputs (D_pre,
+# probe bank, pretrained.pt) come from a prior pretrain-shared run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pretrain_run_name:
+        description: "Pretrain run name (must already exist under \\$HOME/wcollapse-shared/)"
+        required: true
+        default: "pretrain-v1"
+      seeds:
+        description: "Comma-separated seed list (one job per seed per condition)"
+        required: true
+        default: "0,1,2"
+      conditions:
+        description: "Comma-separated condition list"
+        required: true
+        default: "collapse_prone,frozen_wm,balanced_replay"
+      num_gpus:
+        description: "Max parallel GPUs to fan across (>=#jobs means full parallelism)"
+        required: true
+        default: "8"
+      data_version:
+        description: "Dataset version (used only for prepare_data.sh sanity check)"
+        required: true
+        default: "v1"
+
+jobs:
+  run:
+    runs-on: [self-hosted, Linux, X64]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show machine info
+        run: |
+          hostname
+          nvidia-smi -L || true
+
+      - name: Setup uv environment
+        run: |
+          export UV_CACHE_DIR="$HOME/.cache/uv"
+          uv sync --frozen
+
+      - name: Confirm shared pretrain present
+        run: |
+          SHARED="$HOME/wcollapse-shared/${{ inputs.pretrain_run_name }}"
+          echo "shared dir: $SHARED"
+          ls -la "$SHARED/data" "$SHARED/ckpts"
+          test -f "$SHARED/data/d_pre.hdf5"
+          test -f "$SHARED/data/probes.hdf5"
+          test -f "$SHARED/ckpts/pretrained.pt"
+
+      - name: Launch all (condition × seed) jobs in parallel
+        shell: bash -eo pipefail {0}
+        run: |
+          export DATA_ROOT="$HOME/datasets/world-collapse"
+          export HF_HOME="$HOME/hf_cache"
+          export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL=osmesa
+          export PYOPENGL_PLATFORM=osmesa
+          export PYTHONUNBUFFERED=1
+          # Cap per-process CPU threads so 9 concurrent processes don't trash
+          # each other on the shared CPU.
+          export OMP_NUM_THREADS=2
+          export MKL_NUM_THREADS=2
+
+          ./scripts/run_conditions.sh \
+            "$HOME/wcollapse-shared/${{ inputs.pretrain_run_name }}" \
+            "${{ inputs.seeds }}" \
+            "${{ inputs.conditions }}" \
+            "${{ inputs.num_gpus }}"
+
+      - name: Write summary
+        if: always()
+        run: |
+          echo "## run-conditions summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Pretrain: ${{ inputs.pretrain_run_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Conditions: ${{ inputs.conditions }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Seeds: ${{ inputs.seeds }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Per-run last metrics row" >> "$GITHUB_STEP_SUMMARY"
+          for d in runs/*/ ; do
+            name="$(basename "$d")"
+            last=$(tail -n 1 "${d}metrics.jsonl" 2>/dev/null || true)
+            if [ -n "$last" ]; then
+              echo "- **${name}**: \`$(echo "$last" | head -c 200)...\`" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- **${name}**: (no metrics.jsonl produced)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+      - name: Upload all run outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conditions-${{ inputs.pretrain_run_name }}
+          path: |
+            runs/*/train.log
+            runs/*/metrics.json
+            runs/*/metrics.jsonl
+            runs/*/metrics_pretrain.jsonl
+            runs/*/config.yaml
+            runs/*/config_resolved.yaml
+            runs/*/metadata.json
+            runs/*/plots/**

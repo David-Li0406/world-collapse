@@ -1,0 +1,97 @@
+name: pretrain-shared
+
+# One-time Phase A: collect D_pre, build the probe bank, pretrain the world
+# model + reward/semantic heads. The full output tree is copied to
+# $HOME/wcollapse-shared/<run_name>/ on the runner so the run-conditions
+# workflow can mount it via symlink without re-downloading or re-collecting.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_name:
+        description: "Shared pretrain run name (used as the persistent dir name on the runner)"
+        required: true
+        default: "pretrain-v1"
+      data_version:
+        description: "Dataset version (for prepare_data.sh cache sentinel)"
+        required: true
+        default: "v1"
+
+jobs:
+  run:
+    runs-on: [self-hosted, Linux, X64]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show machine info
+        run: |
+          hostname
+          nvidia-smi -L || true
+
+      - name: Setup uv environment
+        run: |
+          export UV_CACHE_DIR="$HOME/.cache/uv"
+          uv sync --frozen
+
+      - name: Prepare data
+        run: |
+          export DATA_ROOT="$HOME/datasets/world-collapse"
+          export DATA_VERSION="${{ inputs.data_version }}"
+          export HF_HOME="$HOME/hf_cache"
+          export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL=osmesa
+          export PYOPENGL_PLATFORM=osmesa
+          ./scripts/prepare_data.sh
+
+      - name: Pretrain
+        shell: bash -eo pipefail {0}
+        run: |
+          export DATA_ROOT="$HOME/datasets/world-collapse"
+          export HF_HOME="$HOME/hf_cache"
+          export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL=osmesa
+          export PYOPENGL_PLATFORM=osmesa
+          export PYTHONUNBUFFERED=1
+
+          OUT="runs/${{ inputs.run_name }}"
+          mkdir -p "$OUT"
+          uv run python -u train.py \
+            --config configs/pretrain.yaml \
+            --output_dir "$OUT" \
+            2>&1 | tee "$OUT/train.log"
+
+          # Promote to the persistent shared location so run-conditions can
+          # mount d_pre.hdf5, probes.hdf5, pretrained.pt via symlink.
+          SHARED="$HOME/wcollapse-shared/${{ inputs.run_name }}"
+          rm -rf "$SHARED"
+          mkdir -p "$(dirname "$SHARED")"
+          cp -r "$OUT" "$SHARED"
+          echo "[pretrain-shared] persistent copy at $SHARED"
+          ls -la "$SHARED" "$SHARED/data" "$SHARED/ckpts"
+
+      - name: Write summary
+        if: always()
+        run: |
+          echo "## Pretrain summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Run name: ${{ inputs.run_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Data version: ${{ inputs.data_version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Persistent dir: \$HOME/wcollapse-shared/${{ inputs.run_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.run_name }}
+          path: |
+            runs/${{ inputs.run_name }}/train.log
+            runs/${{ inputs.run_name }}/metrics_pretrain.jsonl
+            runs/${{ inputs.run_name }}/config.yaml
+            runs/${{ inputs.run_name }}/config_resolved.yaml
+            runs/${{ inputs.run_name }}/metadata.json

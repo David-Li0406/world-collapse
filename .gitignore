@@ -6,12 +6,14 @@ __pycache__/
 *.pth
 *.ckpt
 *.safetensors
-runs/
-downloaded_runs/
-wandb/
-data/
-datasets/
-hf_cache/
+# Anchor to repo root so we don't accidentally ignore src/wcollapse/data/,
+# tests/data, or any other nested 'data' directory inside the project.
+/runs/
+/downloaded_runs/
+/wandb/
+/data/
+/datasets/
+/hf_cache/
 .cache/
 .pytest_cache/
 .ruff_cache/
