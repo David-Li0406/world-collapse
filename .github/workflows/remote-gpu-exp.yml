@@ -41,12 +41,24 @@ jobs:
         run: |
           echo "--- /dev/dri permissions ---"
           ls -la /dev/dri 2>&1 || true
-          echo "--- nvidia-smi GPUs ---"
+          echo "--- groups for current user ---"
+          id 2>&1 || true
+          echo "--- nvidia-smi -L ---"
           nvidia-smi -L 2>&1 || true
-          echo "--- libOSMesa available? ---"
+          echo "--- DRI drivers present ---"
+          ls /usr/lib64/dri /usr/lib/x86_64-linux-gnu/dri 2>&1 || true
+          echo "--- libOSMesa ---"
           ldconfig -p | grep -i osmesa || echo "(none)"
-          echo "--- libEGL available? ---"
-          ldconfig -p | grep -i "libEGL\.so\|libGLX_nvidia" || echo "(none)"
+          find /usr -name "libOSMesa*" 2>/dev/null || true
+          echo "--- libEGL ICDs ---"
+          ldconfig -p | grep -iE "libEGL|libGLX|libGLES" || echo "(none)"
+          ls /usr/share/glvnd/egl_vendor.d/ 2>&1 || echo "(no egl_vendor.d)"
+          find /usr -name "libEGL_nvidia*" 2>/dev/null || true
+          find /usr -name "libGLX_nvidia*" 2>/dev/null || true
+          echo "--- xvfb / glfw ---"
+          which xvfb-run 2>&1 || echo "(no xvfb)"
+          ldconfig -p | grep -i glfw || echo "(no glfw)"
+          echo "--- end probe ---"
 
       - name: Prepare data
         run: |
