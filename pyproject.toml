@@ -10,8 +10,11 @@ dependencies = [
     "mujoco==3.3.0",
     "numpy>=1.24,<2.3",
     "scipy>=1.10",
-    "torch>=2.2",
-    "torchvision>=0.17",  # iVideoGPT's lpips.py imports torchvision.models at package-import time
+    # Pin torch / torchvision to the CUDA-12.1 PyTorch index because the GPU
+    # runner's NVIDIA driver (12020) only supports CUDA 12.x. The default PyPI
+    # torch wheel ships with CUDA 13 runtime and segfaults at first use.
+    "torch>=2.2,<2.6",
+    "torchvision>=0.17,<0.21",  # iVideoGPT's lpips.py imports torchvision.models at package-import time
     "h5py>=3.10",
     "omegaconf>=2.3",
     "einops>=0.7",
@@ -37,6 +40,13 @@ dev = [
 
 [tool.uv.sources]
 metaworld = { path = "./Metaworld", editable = true }
+torch = { index = "pytorch-cu121" }
+torchvision = { index = "pytorch-cu121" }
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]
