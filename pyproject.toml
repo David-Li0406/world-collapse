@@ -11,6 +11,7 @@ dependencies = [
     "numpy>=1.24,<2.3",
     "scipy>=1.10",
     "torch>=2.2",
+    "torchvision>=0.17",  # iVideoGPT's lpips.py imports torchvision.models at package-import time
     "h5py>=3.10",
     "omegaconf>=2.3",
     "einops>=0.7",
