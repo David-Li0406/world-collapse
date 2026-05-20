@@ -44,6 +44,8 @@ jobs:
           export HF_HOME="$HOME/hf_cache"
           export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
+          export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}"
           ./scripts/prepare_data.sh
 
       - name: Run experiment
@@ -52,7 +54,11 @@ jobs:
           export HF_HOME="$HOME/hf_cache"
           export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
-          export MUJOCO_GL="${MUJOCO_GL:-egl}"
+          # GPU runners with locked /dev/dri/card* devices can't use EGL; osmesa
+          # is pure-software rendering so it works in any container without GPU
+          # device permissions. Slower than EGL but reliable.
+          export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
+          export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}"
 
           mkdir -p "runs/${{ inputs.run_name }}"
           uv run python train.py \
