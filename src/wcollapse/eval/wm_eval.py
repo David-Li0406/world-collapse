@@ -21,7 +21,7 @@ import torch
 from omegaconf import DictConfig
 
 from wcollapse.data.probe_bank import ProbeBank
-from wcollapse.models.ivideogpt_wrapper import MiniWorldModel
+from wcollapse.models.ivideogpt_wrapper import MiniWorldModel, build_world_model
 from wcollapse.models.semantic_head import SemanticHead
 from wcollapse.utils.checkpoint import load_checkpoint
 
@@ -81,8 +81,9 @@ def probe_eval(
     # Forgetting score: same metric under the post-pretrain M_0 WM.
     # We share the current semantic_head — we want to isolate WM drift, not
     # head drift. (If the head also drifts, that's part of the system's
-    # forgetting; it's fine to attribute jointly.)
-    M0 = MiniWorldModel(world_model.cfg).to(device)
+    # forgetting; it's fine to attribute jointly.) Route through build_world_model
+    # so the M_0 instance matches whichever backbone the active config uses.
+    M0 = build_world_model(world_model.cfg).to(device)
     state = load_checkpoint(wm_baseline_path, map_location=str(device))
     M0.load_state_dict(state["world_model"])
     pred_0 = _predict_semantic_rollout(M0, semantic_head, probe_bank, device)
