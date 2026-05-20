@@ -28,7 +28,7 @@ echo "Preparing dataset at $DATA_ROOT (version $DATA_VERSION)"
 
 # Smoke-render a single frame to confirm mujoco is functional before we burn
 # time on a real training run.
-MUJOCO_GL="${MUJOCO_GL:-egl}" MUJOCO_EGL_DEVICE_ID="${MUJOCO_EGL_DEVICE_ID:-0}" uv run python - <<'PY'
+MUJOCO_GL="${MUJOCO_GL:-osmesa}" PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}" uv run python - <<'PY'
 import metaworld
 bench = metaworld.MT1("push-v3", seed=0)
 env_cls = bench.train_classes["push-v3"]

@@ -67,10 +67,10 @@ jobs:
           export HF_HOME="$HOME/hf_cache"
           export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
-          # On shared GPU runners /dev/dri/card* is permission-denied, but
-          # NVIDIA EGL devices are usually accessible. Point mujoco at device 0.
-          export MUJOCO_GL="${MUJOCO_GL:-egl}"
-          export MUJOCO_EGL_DEVICE_ID="${MUJOCO_EGL_DEVICE_ID:-0}"
+          # Runner has no /dev/dri/card* access and no NVIDIA EGL libs; OSMesa
+          # (software rendering via libOSMesa6) is the working backend.
+          export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
+          export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}"
           ./scripts/prepare_data.sh
 
       - name: Run experiment
@@ -79,8 +79,8 @@ jobs:
           export HF_HOME="$HOME/hf_cache"
           export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
-          export MUJOCO_GL="${MUJOCO_GL:-egl}"
-          export MUJOCO_EGL_DEVICE_ID="${MUJOCO_EGL_DEVICE_ID:-0}"
+          export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
+          export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}"
 
           mkdir -p "runs/${{ inputs.run_name }}"
           uv run python train.py \
