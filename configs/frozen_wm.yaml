@@ -1,0 +1,11 @@
+# Baseline A: pretrained WM is frozen during Phase B.
+# Actor/critic still update on imagined rollouts from the frozen WM.
+# Tests whether performance changes are caused by online WM updates vs policy learning.
+mode: online
+condition: frozen_wm
+
+online:
+  bias_goal: true
+  # recent_window unused for the WM (no updates) but the actor still samples
+  # from the recent window so its training distribution matches collapse_prone.
+  recent_window: 5000

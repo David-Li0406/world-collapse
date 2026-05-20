@@ -1,0 +1,252 @@
+"""Phase B: closed-loop online training.
+
+This file implements the three experimental conditions from the plan:
+
+  * ``collapse_prone``  : WM updated on a recency-biased buffer (FIFO window).
+  * ``balanced_replay`` : WM updated on uniform mix of D_pre + D_online.
+  * ``frozen_wm``       : WM not updated at all; actor/critic still train on
+                          imagined rollouts from the frozen WM.
+
+Each iteration:
+  1. collect ``collect_episodes`` real episodes with the current actor,
+  2. append to the active buffer,
+  3. run ``wm_steps`` world-model updates (skipped under frozen_wm),
+  4. run ``head_steps`` reward+semantic head updates,
+  5. run ``actor_steps`` imagination updates,
+  6. every ``eval_every`` iterations: full evaluation against the probe bank
+     + goal-shift task. Snapshot checkpoint.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import torch
+import torch.nn.functional as F
+from omegaconf import DictConfig
+
+from wcollapse.data.buffer import ReplayBuffer
+from wcollapse.data.probe_bank import ProbeBank
+from wcollapse.envs.metaworld_env import MetaworldVisualEnv
+from wcollapse.eval.behavior import goal_shift_eval
+from wcollapse.eval.coverage import coverage_metrics
+from wcollapse.eval.wm_eval import probe_eval
+from wcollapse.models.actor import Actor
+from wcollapse.models.critic import Critic
+from wcollapse.models.ivideogpt_wrapper import MiniWorldModel
+from wcollapse.models.reward_head import RewardHead
+from wcollapse.models.semantic_head import SemanticHead
+from wcollapse.training.collection import rollout_actor
+from wcollapse.training.imagination import (
+    build_imagination_optimizers,
+    imagination_step,
+)
+from wcollapse.utils.checkpoint import save_checkpoint
+from wcollapse.utils.logging import MetricsLogger
+
+
+def make_active_buffer(
+    pretrain_buffer: ReplayBuffer,
+    condition: str,
+    cfg: DictConfig,
+) -> ReplayBuffer:
+    """Return the buffer that WM updates draw from this run.
+
+    For ``balanced_replay`` we reuse ``pretrain_buffer`` (which already holds
+    D_pre) and append D_online to the same store. For ``collapse_prone`` we
+    spin up a fresh recency-windowed buffer that *does not* include D_pre at all
+    — that's what the proposal calls "small replay buffer or no replay".
+    """
+    if condition == "balanced_replay":
+        pretrain_buffer.mode = "uniform"
+        return pretrain_buffer
+    elif condition in {"collapse_prone", "frozen_wm"}:
+        return ReplayBuffer(
+            capacity=int(cfg.recent_window),
+            window_size=int(cfg.recent_window),
+            seq_len=pretrain_buffer.seq_len,
+            image_size=pretrain_buffer.image_size,
+            mode="recent",
+        )
+    else:
+        raise ValueError(f"Unknown condition: {condition}")
+
+
+def online_loop(
+    *,
+    condition: str,
+    env: MetaworldVisualEnv,
+    world_model: MiniWorldModel,
+    reward_head: RewardHead,
+    semantic_head: SemanticHead,
+    actor: Actor,
+    critic: Critic,
+    pretrain_buffer: ReplayBuffer,
+    pretrain_wm_state: dict,
+    probe_bank: ProbeBank,
+    cfg: DictConfig,
+    device: torch.device,
+    output_dir: Path,
+) -> None:
+    metrics_logger = MetricsLogger(output_dir / "metrics.jsonl")
+
+    wm_opt = torch.optim.AdamW(world_model.parameters(), lr=float(cfg.lr_wm))
+    rew_opt = torch.optim.AdamW(reward_head.parameters(), lr=float(cfg.lr_head))
+    sem_opt = torch.optim.AdamW(semantic_head.parameters(), lr=float(cfg.lr_head))
+    imag_opts = build_imagination_optimizers(actor, critic, cfg)
+
+    active_buffer = make_active_buffer(pretrain_buffer, condition, cfg)
+
+    # Goal-region restriction during data collection: the trained sub-region.
+    # x ∈ [-0.1, 0.0] for the trained side; [0.0, 0.1] reserved for goal-shift eval.
+    goal_low_full = env.goal_low
+    goal_high_full = env.goal_high
+    trained_lo = goal_low_full.copy()
+    trained_hi = goal_high_full.copy()
+    trained_hi[0] = 0.0  # split along x
+    holdout_lo = goal_low_full.copy()
+    holdout_hi = goal_high_full.copy()
+    holdout_lo[0] = 0.0
+    trained_subregion = (trained_lo, trained_hi)
+    holdout_subregion = (holdout_lo, holdout_hi)
+
+    # Pre-pretrain WM snapshot is M_0 for the forgetting score.
+    save_checkpoint(
+        output_dir / "ckpts" / "wm_M0.pt",
+        world_model=world_model,
+    )
+
+    for it in range(int(cfg.iterations)):
+        # 1) collect real trajectories with the current actor on the trained subregion
+        new_trajs = rollout_actor(
+            env=env,
+            world_model=world_model,
+            actor=actor,
+            n_episodes=int(cfg.collect_episodes),
+            goal_subregion=trained_subregion if bool(cfg.bias_goal) else None,
+            exploration_noise=float(cfg.exploration_noise),
+            deterministic=False,
+            device=device,
+            seed=int(cfg.get("seed", 0)) + it,
+        )
+        for tr in new_trajs:
+            active_buffer.add_trajectory(tr)
+            if condition == "balanced_replay":
+                # Already added to pretrain_buffer (same object); no double-write.
+                pass
+            else:
+                # Also tee into pretrain_buffer so coverage analysis can still
+                # see the full visitation history, but DO NOT use this for WM.
+                pretrain_buffer.add_trajectory(tr)
+
+        # 2) WM updates
+        wm_metrics = {}
+        if condition != "frozen_wm":
+            world_model.train()
+            for _ in range(int(cfg.wm_steps)):
+                batch = active_buffer.sample_sequences(batch_size=int(cfg.batch_size))
+                wm_opt.zero_grad(set_to_none=True)
+                loss = world_model.compute_loss(batch)
+                loss["total"].backward()
+                torch.nn.utils.clip_grad_norm_(world_model.parameters(), 1.0)
+                wm_opt.step()
+                wm_metrics = {
+                    "wm_total": float(loss["total"].item()),
+                    "wm_recon": float(loss["recon"].item()),
+                    "wm_dyn": float(loss["dynamics"].item()),
+                }
+
+        # 3) reward + semantic head updates — always trained, even under frozen_wm
+        head_metrics: dict[str, float] = {}
+        for _ in range(int(cfg.head_steps)):
+            batch = active_buffer.sample_sequences(batch_size=int(cfg.batch_size))
+            with torch.no_grad():
+                rgb = torch.from_numpy(batch["rgb"]).to(device)
+                x = (rgb.float() / 127.5 - 1.0).permute(0, 1, 4, 2, 3)
+                B, Lp1 = x.shape[:2]
+                z = world_model.encoder(x.reshape(B * Lp1, *x.shape[2:])).view(B, Lp1, -1)
+            target_rewards = torch.from_numpy(batch["rewards"]).to(device)
+            target_semantic = torch.from_numpy(batch["semantic"]).to(device)[:, 1:]
+            z_post = z[:, 1:]
+            rew_opt.zero_grad(set_to_none=True)
+            rew_loss = F.mse_loss(
+                reward_head(z_post.reshape(-1, z_post.shape[-1])),
+                target_rewards.reshape(-1),
+            )
+            rew_loss.backward()
+            rew_opt.step()
+            sem_opt.zero_grad(set_to_none=True)
+            sem_loss = F.mse_loss(
+                semantic_head(z_post.reshape(-1, z_post.shape[-1])),
+                target_semantic.reshape(-1, target_semantic.shape[-1]),
+            )
+            sem_loss.backward()
+            sem_opt.step()
+            head_metrics = {
+                "reward_mse": float(rew_loss.item()),
+                "semantic_mse": float(sem_loss.item()),
+            }
+
+        # 4) actor-critic on imagined latent rollouts
+        imag_metrics: dict[str, float] = {}
+        for _ in range(int(cfg.actor_steps)):
+            imag_metrics = imagination_step(
+                world_model=world_model,
+                reward_head=reward_head,
+                actor=actor,
+                critic=critic,
+                opts=imag_opts,
+                buffer=active_buffer,
+                cfg=cfg,
+                device=device,
+            )
+
+        # 5) periodic evaluation
+        if it % int(cfg.eval_every) == 0 or it == int(cfg.iterations) - 1:
+            coverage = coverage_metrics(
+                pretrain_buffer=pretrain_buffer,
+                active_buffer=active_buffer,
+                probe_bank=probe_bank,
+                cfg=cfg,
+            )
+            wm_eval = probe_eval(
+                world_model=world_model,
+                semantic_head=semantic_head,
+                probe_bank=probe_bank,
+                wm_baseline_path=output_dir / "ckpts" / "wm_M0.pt",
+                device=device,
+                cfg=cfg,
+                visited_mask=coverage["visited_mask"],
+            )
+            behavior = goal_shift_eval(
+                env=env,
+                world_model=world_model,
+                actor=actor,
+                trained_subregion=trained_subregion,
+                holdout_subregion=holdout_subregion,
+                n_eval_episodes=int(cfg.n_eval_episodes),
+                device=device,
+                seed=int(cfg.get("seed", 0)) + 10_000 + it,
+            )
+            metrics = {
+                **wm_metrics,
+                **head_metrics,
+                **imag_metrics,
+                **{f"cov/{k}": v for k, v in coverage["scalar"].items()},
+                **{f"wm/{k}": v for k, v in wm_eval.items()},
+                **{f"beh/{k}": v for k, v in behavior.items()},
+                "condition": condition,
+                "iteration": it,
+            }
+            metrics_logger.log(step=it, metrics=metrics)
+            save_checkpoint(
+                output_dir / "ckpts" / f"ckpt_{it:06d}.pt",
+                world_model=world_model,
+                reward_head=reward_head,
+                semantic_head=semantic_head,
+                actor=actor,
+                critic=critic,
+                iteration=it,
+            )
+
+    metrics_logger.close()

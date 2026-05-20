@@ -1,0 +1,69 @@
+# Shared defaults across all configs. Each condition-specific file overlays.
+# Keep modest defaults so accidents on Machine B don't burn hours.
+
+mode: full
+condition: collapse_prone
+seed: 42
+device: cuda
+
+env:
+  task: push-v3
+  image_size: 64
+  camera_name: corner
+  max_episode_steps: 200
+
+pretrain_data:
+  n_episodes: 500
+  scripted_fraction: 0.7
+  scripted_noise: 0.3
+
+probe:
+  n_probes: 256
+  horizon: 15
+  action_source: scripted
+
+wm:
+  backbone: mini  # swap to 'ivideogpt' once the upstream submodule is vendored
+  latent_dim: 128
+  encoder_channels: [32, 64, 128, 256]
+  decoder_channels: [256, 128, 64, 32]
+  dynamics_hidden: 256
+  dynamics_layers: 2
+  seq_len: 8
+
+pretrain:
+  steps: 5000
+  batch_size: 16
+  lr_wm: 3.0e-4
+  lr_head: 1.0e-3
+  log_every: 100
+
+online:
+  iterations: 200
+  collect_episodes: 5
+  exploration_noise: 0.1
+  bias_goal: true
+  recent_window: 5000
+
+  wm_steps: 50
+  head_steps: 20
+  actor_steps: 50
+
+  batch_size: 16
+  lr_wm: 3.0e-4
+  lr_head: 1.0e-3
+  lr_actor: 3.0e-4
+  lr_critic: 3.0e-4
+  ema_tau: 0.005
+
+  imag_horizon: 10
+  gamma: 0.99
+  lambda_: 0.95
+  entropy_coef: 1.0e-3
+
+  eval_every: 5
+  n_eval_episodes: 20
+
+  coverage_bins: 20
+  density_floor: 1.0e-4
+  visited_percentile: 50

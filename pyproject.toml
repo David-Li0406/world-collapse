@@ -1,0 +1,58 @@
+[project]
+name = "world-collapse"
+version = "0.1.0"
+description = "Reveal world collapse in Metaworld with iVideoGPT-style visual world models."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "metaworld",
+    "gymnasium>=1.1",
+    "mujoco==3.3.0",
+    "numpy>=1.24,<2.3",
+    "scipy>=1.10",
+    "torch>=2.2",
+    "h5py>=3.10",
+    "omegaconf>=2.3",
+    "einops>=0.7",
+    "matplotlib>=3.7",
+    "imageio>=2.30",
+    "imageio-ffmpeg>=0.4",
+    "tqdm>=4.66",
+    "pyyaml>=6.0",
+    # iVideoGPT runtime deps (TF intentionally omitted — only needed for OXE TFDS data
+    # loaders, which we don't use; our data comes from Metaworld).
+    "transformers>=4.38,<4.55",
+    "diffusers>=0.27,<0.36",
+    "accelerate>=0.27",
+    "safetensors>=0.4",
+    "huggingface-hub>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "ruff>=0.5",
+]
+
+[tool.uv.sources]
+metaworld = { path = "./Metaworld", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wcollapse"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

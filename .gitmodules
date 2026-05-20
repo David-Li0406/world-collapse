@@ -1,0 +1,6 @@
+[submodule "Metaworld"]
+	path = Metaworld
+	url = https://github.com/Farama-Foundation/Metaworld.git
+[submodule "iVideoGPT"]
+	path = iVideoGPT
+	url = https://github.com/thuml/iVideoGPT.git

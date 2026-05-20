@@ -1,0 +1,8 @@
+# Main condition: recency-biased WM updates, no replay of D_pre during Phase B.
+# This is the configuration §4.3 expects to produce world collapse.
+mode: online
+condition: collapse_prone
+
+online:
+  bias_goal: true
+  recent_window: 5000

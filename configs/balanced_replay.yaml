@@ -1,0 +1,8 @@
+# Baseline B: uniform replay over D_pre ∪ D_online during Phase B.
+# Tests whether broad-coverage replay preserves the off-support world-model.
+mode: online
+condition: balanced_replay
+
+online:
+  bias_goal: true
+  recent_window: 1000000  # effectively unused since replay is uniform over all data

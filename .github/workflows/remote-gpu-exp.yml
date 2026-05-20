@@ -11,28 +11,72 @@ on:
         description: "Run name"
         required: true
         default: "debug"
+      data_version:
+        description: "Dataset version"
+        required: true
+        default: "v1"
 
 jobs:
   run:
     runs-on: [self-hosted, Linux, X64]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Check machine
+      - name: Show machine info
         run: |
           hostname
           nvidia-smi || true
+          uname -a
+
+      - name: Setup uv environment
+        run: |
+          export UV_CACHE_DIR="$HOME/.cache/uv"
+          uv sync --frozen
+
+      - name: Prepare data
+        run: |
+          export DATA_ROOT="$HOME/datasets/world-collapse"
+          export DATA_VERSION="${{ inputs.data_version }}"
+          export HF_HOME="$HOME/hf_cache"
+          export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          ./scripts/prepare_data.sh
 
       - name: Run experiment
         run: |
-          mkdir -p runs/${{ inputs.run_name }}
-          python train.py \
+          export DATA_ROOT="$HOME/datasets/world-collapse"
+          export HF_HOME="$HOME/hf_cache"
+          export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL="${MUJOCO_GL:-egl}"
+
+          mkdir -p "runs/${{ inputs.run_name }}"
+          uv run python train.py \
             --config "${{ inputs.config }}" \
             --output_dir "runs/${{ inputs.run_name }}" \
             2>&1 | tee "runs/${{ inputs.run_name }}/train.log"
 
-      - name: Upload logs
+      - name: Write summary
+        if: always()
+        run: |
+          echo "## Experiment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Config: ${{ inputs.config }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Run name: ${{ inputs.run_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Data version: ${{ inputs.data_version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "runs/${{ inputs.run_name }}/metrics.json" ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "runs/${{ inputs.run_name }}/metrics.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -40,4 +84,9 @@ jobs:
           path: |
             runs/${{ inputs.run_name }}/train.log
             runs/${{ inputs.run_name }}/metrics.json
-            runs/${{ inputs.run_name }}/**
+            runs/${{ inputs.run_name }}/metrics.jsonl
+            runs/${{ inputs.run_name }}/metrics_pretrain.jsonl
+            runs/${{ inputs.run_name }}/config.yaml
+            runs/${{ inputs.run_name }}/config_resolved.yaml
+            runs/${{ inputs.run_name }}/metadata.json
+            runs/${{ inputs.run_name }}/plots/**

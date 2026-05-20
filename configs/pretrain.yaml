@@ -1,0 +1,4 @@
+# Stand-alone Phase A. Produces data/d_pre.hdf5, data/probes.hdf5,
+# and ckpts/pretrained.pt so all three condition overlays can reuse them.
+mode: pretrain
+condition: ""

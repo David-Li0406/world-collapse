@@ -1,0 +1,67 @@
+# Smoke variant — exercises every module end-to-end in ~5 min on CPU.
+mode: debug
+condition: collapse_prone
+seed: 0
+device: cpu
+
+env:
+  task: push-v3
+  image_size: 48
+  camera_name: corner
+  max_episode_steps: 40
+
+pretrain_data:
+  n_episodes: 8
+  scripted_fraction: 0.75
+  scripted_noise: 0.3
+
+probe:
+  n_probes: 16
+  horizon: 8
+  action_source: scripted
+
+wm:
+  backbone: mini
+  latent_dim: 32
+  encoder_channels: [16, 32, 64]
+  decoder_channels: [64, 32, 16]
+  dynamics_hidden: 64
+  dynamics_layers: 2
+  seq_len: 4
+
+pretrain:
+  steps: 50
+  batch_size: 4
+  lr_wm: 3.0e-4
+  lr_head: 1.0e-3
+  log_every: 10
+
+online:
+  iterations: 4
+  collect_episodes: 2
+  exploration_noise: 0.1
+  bias_goal: true
+  recent_window: 400
+
+  wm_steps: 5
+  head_steps: 3
+  actor_steps: 5
+
+  batch_size: 4
+  lr_wm: 3.0e-4
+  lr_head: 1.0e-3
+  lr_actor: 3.0e-4
+  lr_critic: 3.0e-4
+  ema_tau: 0.01
+
+  imag_horizon: 4
+  gamma: 0.95
+  lambda_: 0.9
+  entropy_coef: 1.0e-3
+
+  eval_every: 1
+  n_eval_episodes: 2
+
+  coverage_bins: 8
+  density_floor: 1.0e-4
+  visited_percentile: 50
