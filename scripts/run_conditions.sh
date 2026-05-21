@@ -35,10 +35,17 @@ done
 # Map variant name -> space-separated --override args.
 variant_overrides() {
   case "$1" in
-    base)         echo "" ;;
-    frozen_head)  echo "online.freeze_semantic_head=true" ;;
-    warmstart)    echo "online.imitation_warmup_episodes=50 online.imitation_warmup_steps=2000" ;;
-    unfreeze)     echo "wm.unfreeze_tokenizer=true wm.freeze_codebook_only=true" ;;
+    base)            echo "" ;;
+    frozen_head)     echo "online.freeze_semantic_head=true" ;;
+    warmstart)       echo "online.imitation_warmup_episodes=50 online.imitation_warmup_steps=2000" ;;
+    unfreeze)        echo "wm.unfreeze_tokenizer=true wm.freeze_codebook_only=true" ;;
+    # Variant `longer`: bigger sample budget — 150 online iter, 30 seed eps,
+    # plus a light BC warmup so the actor starts from a non-trivial policy.
+    longer)          echo "online.iterations=150 online.seed_episodes=30 online.imitation_warmup_episodes=20 online.imitation_warmup_steps=1000" ;;
+    # Variant `aggressive_bias`: shrink the trained subregion to the first
+    # 25% of the goal-x range (vs 50% default), and tighten the recency
+    # window so the WM trains on a smaller slice of the actor's visitation.
+    aggressive_bias) echo "online.goal_bias_fraction=0.25 online.recent_window=3000" ;;
     *) echo "ERROR: unknown variant: $1" >&2; exit 1 ;;
   esac
 }

@@ -95,18 +95,32 @@ def online_loop(
 
     active_buffer = make_active_buffer(pretrain_buffer, condition, cfg)
 
-    # Goal-region restriction during data collection: the trained sub-region.
-    # x ∈ [-0.1, 0.0] for the trained side; [0.0, 0.1] reserved for goal-shift eval.
+    # Goal-region restriction during data collection. The trained sub-region
+    # occupies the first `goal_bias_fraction` of the goal-x range; the
+    # complement is reserved for goal-shift evaluation. Smaller fractions
+    # give a sharper visitation gradient (variant `aggressive_bias`).
     goal_low_full = env.goal_low
     goal_high_full = env.goal_high
+    bias_fraction = float(cfg.get("goal_bias_fraction", 0.5))
+    split_x = float(goal_low_full[0] + (goal_high_full[0] - goal_low_full[0]) * bias_fraction)
     trained_lo = goal_low_full.copy()
     trained_hi = goal_high_full.copy()
-    trained_hi[0] = 0.0  # split along x
+    trained_hi[0] = split_x
     holdout_lo = goal_low_full.copy()
     holdout_hi = goal_high_full.copy()
-    holdout_lo[0] = 0.0
+    holdout_lo[0] = split_x
     trained_subregion = (trained_lo, trained_hi)
     holdout_subregion = (holdout_lo, holdout_hi)
+    print(
+        f"[online] goal bias: trained x ∈ [{trained_lo[0]:.3f}, {split_x:.3f}], "
+        f"holdout x ∈ [{split_x:.3f}, {holdout_hi[0]:.3f}] (fraction={bias_fraction:.2f})",
+        flush=True,
+    )
+    # Align the coverage module's static partition split with the bias split,
+    # so static_visited == "probes whose goal_x is in the trained subregion".
+    from omegaconf import OmegaConf as _OC
+    _OC.set_struct(cfg, False)
+    cfg.static_goal_split = split_x
 
     # Pre-pretrain WM snapshot is M_0 for the forgetting score.
     save_checkpoint(
