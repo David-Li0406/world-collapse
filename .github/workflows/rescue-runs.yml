@@ -1,0 +1,71 @@
+name: rescue-runs
+
+# Recover the per-run outputs that the previous workflow's runner left on
+# disk before its `Upload all run outputs` step had a chance to fire.
+# Uses `clean: false` on checkout so the leftover runs/<name>/ directories
+# from the prior workflow invocation are still present in the workspace
+# when this job runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      destination:
+        description: "Subdir under $HOME/wcollapse-rescue/ to copy the salvaged runs into"
+        required: true
+        default: "batch1"
+
+jobs:
+  rescue:
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Checkout repo without cleaning
+        uses: actions/checkout@v4
+        with:
+          clean: false        # KEEP untracked files in the workspace
+          submodules: false
+
+      - name: Inspect workspace
+        run: |
+          echo "--- pwd ---"
+          pwd
+          echo "--- ls top ---"
+          ls -la
+          echo "--- ls runs/ ---"
+          ls -la runs/ 2>&1 || echo "(no runs/ directory)"
+          echo "--- per-run summary ---"
+          if [ -d runs ]; then
+            for d in runs/*/; do
+              name=$(basename "$d")
+              rows=$(wc -l < "$d/metrics.jsonl" 2>/dev/null | tr -d ' ' || echo 0)
+              ckpts=$(ls "$d/ckpts/" 2>/dev/null | wc -l)
+              echo "  $name : metrics.jsonl rows=$rows  ckpts=$ckpts"
+            done
+          fi
+
+      - name: Copy runs to persistent dir
+        if: always()
+        run: |
+          DEST="$HOME/wcollapse-rescue/${{ inputs.destination }}"
+          mkdir -p "$DEST"
+          if [ -d runs ] && [ -n "$(ls runs 2>/dev/null)" ]; then
+            cp -r runs/* "$DEST/"
+            echo "Copied $(ls runs | wc -l) run dirs to $DEST"
+            ls -la "$DEST"
+          else
+            echo "Nothing to rescue (runs/ empty or missing)"
+          fi
+
+      - name: Upload rescued artifacts (light — logs + metrics + configs only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rescued-${{ inputs.destination }}
+          path: |
+            runs/*/train.log
+            runs/*/metrics.json
+            runs/*/metrics.jsonl
+            runs/*/metrics_pretrain.jsonl
+            runs/*/config.yaml
+            runs/*/config_resolved.yaml
+            runs/*/metadata.json
+            runs/*/plots/**
