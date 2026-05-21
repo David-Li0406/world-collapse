@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# Launch all (condition × seed) jobs concurrently, packed onto N GPUs.
+# Launch all (variant × condition × seed) jobs concurrently, packed onto N GPUs.
 #
-# Each job:
-#   1) inherits a shared pretrain output (D_pre, probe bank, pretrained.pt)
-#      via symlink — no copy, instant
-#   2) gets its own runs/<condition>-seed<N>/ output dir
-#   3) is pinned to a GPU via CUDA_VISIBLE_DEVICES = job_index mod NUM_GPUS
+# Variants are short names that expand to OmegaConf override flags:
+#   base          (no overrides)
+#   frozen_head   freeze the semantic head during Phase B (plan 1+2)
+#   warmstart     50 imitation-warmup episodes + 2000 BC steps before SAC (plan 3)
+#   unfreeze      unfreeze iVideoGPT tokenizer except codebook (plan 4)
 #
-# With #jobs > NUM_GPUS, some GPU hosts two jobs concurrently. H20 has 96GB
-# so two PyTorch processes per card fit comfortably; total wall-clock matches
-# the theoretical optimum for an evenly-sized batch.
+# Each job inherits the shared pretrain output (D_pre, probe bank,
+# pretrained.pt) via symlink, gets its own output dir, and is pinned to a
+# GPU via CUDA_VISIBLE_DEVICES round-robin.
 #
 # Usage:
-#   run_conditions.sh <shared_pretrain_dir> <seeds_csv> [conditions_csv] [num_gpus]
+#   run_conditions.sh <shared_pretrain_dir> <seeds_csv> [conditions_csv] [num_gpus] [variants_csv]
 # Example:
-#   run_conditions.sh ~/wcollapse-shared/pretrain-v1 0,1,2
+#   run_conditions.sh ~/wcollapse-shared/pretrain-v1 0 collapse_prone,frozen_wm,balanced_replay 8 \
+#                     frozen_head,warmstart,unfreeze
 
 set -euo pipefail
 
@@ -22,6 +23,7 @@ SHARED_PRETRAIN="${1:?shared pretrain dir required}"
 SEEDS_CSV="${2:?seeds csv required}"
 CONDITIONS_CSV="${3:-collapse_prone,frozen_wm,balanced_replay}"
 NUM_GPUS="${4:-8}"
+VARIANTS_CSV="${5:-base}"
 
 for f in ckpts/pretrained.pt data/d_pre.hdf5 data/probes.hdf5; do
   if [ ! -f "$SHARED_PRETRAIN/$f" ]; then
@@ -30,36 +32,60 @@ for f in ckpts/pretrained.pt data/d_pre.hdf5 data/probes.hdf5; do
   fi
 done
 
+# Map variant name -> space-separated --override args.
+variant_overrides() {
+  case "$1" in
+    base)         echo "" ;;
+    frozen_head)  echo "online.freeze_semantic_head=true" ;;
+    warmstart)    echo "online.imitation_warmup_episodes=50 online.imitation_warmup_steps=2000" ;;
+    unfreeze)     echo "wm.unfreeze_tokenizer=true wm.freeze_codebook_only=true" ;;
+    *) echo "ERROR: unknown variant: $1" >&2; exit 1 ;;
+  esac
+}
+
 IFS=',' read -ra SEEDS <<< "$SEEDS_CSV"
 IFS=',' read -ra CONDS <<< "$CONDITIONS_CSV"
+IFS=',' read -ra VARIANTS <<< "$VARIANTS_CSV"
 
 mkdir -p runs
 
-# Pre-stage everyone's input dirs synchronously, then launch in one shot.
+# Pre-stage all run dirs synchronously, then launch in one shot.
 JOBS=()
-for COND in "${CONDS[@]}"; do
-  for SEED in "${SEEDS[@]}"; do
-    RUN_NAME="${COND}-seed${SEED}"
-    OUT="runs/${RUN_NAME}"
-    mkdir -p "$OUT/data" "$OUT/ckpts"
-    ln -sfn "$SHARED_PRETRAIN/data/d_pre.hdf5"     "$OUT/data/d_pre.hdf5"
-    ln -sfn "$SHARED_PRETRAIN/data/probes.hdf5"    "$OUT/data/probes.hdf5"
-    ln -sfn "$SHARED_PRETRAIN/ckpts/pretrained.pt" "$OUT/ckpts/pretrained.pt"
-    JOBS+=("$COND|$SEED|$OUT|$RUN_NAME")
+for VAR in "${VARIANTS[@]}"; do
+  for COND in "${CONDS[@]}"; do
+    for SEED in "${SEEDS[@]}"; do
+      if [ "$VAR" = "base" ]; then
+        RUN_NAME="${COND}-seed${SEED}"
+      else
+        RUN_NAME="${VAR}-${COND}-seed${SEED}"
+      fi
+      OUT="runs/${RUN_NAME}"
+      mkdir -p "$OUT/data" "$OUT/ckpts"
+      ln -sfn "$SHARED_PRETRAIN/data/d_pre.hdf5"     "$OUT/data/d_pre.hdf5"
+      ln -sfn "$SHARED_PRETRAIN/data/probes.hdf5"    "$OUT/data/probes.hdf5"
+      ln -sfn "$SHARED_PRETRAIN/ckpts/pretrained.pt" "$OUT/ckpts/pretrained.pt"
+      JOBS+=("$VAR|$COND|$SEED|$OUT|$RUN_NAME")
+    done
   done
 done
 
 NUM_JOBS=${#JOBS[@]}
-echo "[run_conditions] $NUM_JOBS jobs over $NUM_GPUS GPUs (conditions=${CONDS[*]}, seeds=${SEEDS[*]})"
-echo "[run_conditions] shared pretrain: $SHARED_PRETRAIN"
+echo "[run_conditions] $NUM_JOBS jobs over $NUM_GPUS GPUs"
+echo "[run_conditions]   variants=${VARIANTS[*]}, conditions=${CONDS[*]}, seeds=${SEEDS[*]}"
+echo "[run_conditions]   shared pretrain: $SHARED_PRETRAIN"
 
 PIDS=()
 NAMES=()
 INDEX=0
 for SPEC in "${JOBS[@]}"; do
-  IFS='|' read -r COND SEED OUT RUN_NAME <<< "$SPEC"
+  IFS='|' read -r VAR COND SEED OUT RUN_NAME <<< "$SPEC"
   GPU=$(( INDEX % NUM_GPUS ))
-  echo "[run_conditions] launch $RUN_NAME on GPU $GPU"
+  # Build the --override flag list for this variant.
+  EXTRA_OVERRIDES=()
+  for OV in $(variant_overrides "$VAR"); do
+    EXTRA_OVERRIDES+=("--override" "$OV")
+  done
+  echo "[run_conditions] launch $RUN_NAME on GPU $GPU  (variant=$VAR, cond=$COND, seed=$SEED)"
   (
     CUDA_VISIBLE_DEVICES="$GPU" \
     uv run python -u train.py \
@@ -67,6 +93,7 @@ for SPEC in "${JOBS[@]}"; do
       --output_dir "$OUT" \
       --override "seed=${SEED}" \
       --override "condition=${COND}" \
+      "${EXTRA_OVERRIDES[@]}" \
       > "$OUT/train.log" 2>&1
   ) &
   PIDS+=($!)
@@ -74,8 +101,6 @@ for SPEC in "${JOBS[@]}"; do
   INDEX=$((INDEX + 1))
 done
 
-# Wait for everyone. Collect failures into FAIL, but do NOT short-circuit —
-# we want every run's train.log for diagnostics.
 FAIL=0
 for i in "${!PIDS[@]}"; do
   PID="${PIDS[$i]}"

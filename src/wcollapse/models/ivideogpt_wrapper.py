@@ -57,6 +57,14 @@ class WMConfig:
     free_nats: float = 1.0  # placeholder for KL-style regularization if we add it
     backbone: Literal["mini", "ivideogpt"] = "mini"
 
+    # Variant C: train the iVideoGPT tokenizer during Phase B (matches
+    # iVideoGPT/mbrl/video_predictor.py:114-126 "selected_params" behaviour
+    # — every tokenizer param trains EXCEPT the codebook embedding, so the
+    # codebook stays a stable anchor and codebook collapse doesn't
+    # confound the WM-collapse measurement).
+    unfreeze_tokenizer: bool = False
+    freeze_codebook_only: bool = True
+
 
 def _rgb_to_tensor(rgb: np.ndarray | torch.Tensor, device: torch.device) -> torch.Tensor:
     """uint8 HxWx3 or BxHxWx3 or BxTxHxWx3 -> float CHW tensor in [-1, 1]."""
@@ -274,9 +282,24 @@ class IVideoGPTBackbone(nn.Module):
         self.tokenizer = CompressiveVQModel.from_pretrained(
             hf_model_id, subfolder="tokenizer", low_cpu_mem_usage=False
         )
-        # Freeze the visual codec — we only fine-tune the latent dynamics.
-        for p in self.tokenizer.parameters():
-            p.requires_grad_(False)
+        # Optionally unfreeze the visual codec for Phase B (variant C). When
+        # unfrozen we keep the VQ codebook embedding frozen — iVideoGPT
+        # mbrl's `selected_params=True` recipe — so codebook collapse can't
+        # masquerade as WM collapse.
+        if not cfg.unfreeze_tokenizer:
+            for p in self.tokenizer.parameters():
+                p.requires_grad_(False)
+        else:
+            n_trainable = 0
+            for name, p in self.tokenizer.named_parameters():
+                trainable = not (cfg.freeze_codebook_only and "quantize" in name)
+                p.requires_grad_(trainable)
+                if trainable:
+                    n_trainable += p.numel()
+            print(
+                f"[IVideoGPTBackbone] tokenizer unfrozen: {n_trainable / 1e6:.2f}M trainable params",
+                flush=True,
+            )
 
         # Probe the tokenizer's latent dimension once.
         with torch.no_grad():
@@ -311,9 +334,12 @@ class IVideoGPTBackbone(nn.Module):
 
     def _encode_frames(self, x: torch.Tensor) -> torch.Tensor:
         """(B*T, 3, H, W) -> (B*T, latent_dim) via tokenizer encoder + mean pool + proj."""
-        with torch.no_grad():
-            feats = self.tokenizer.encoder(x)  # (B*T, C, h, w)
-        pooled = feats.flatten(2).mean(-1)  # (B*T, C)
+        if self.cfg.unfreeze_tokenizer:
+            feats = self.tokenizer.encoder(x)
+        else:
+            with torch.no_grad():
+                feats = self.tokenizer.encoder(x)
+        pooled = feats.flatten(2).mean(-1)
         return self.proj_in(pooled)
 
     @property
@@ -362,11 +388,19 @@ class IVideoGPTBackbone(nn.Module):
         return rgb
 
     def compute_loss(self, batch: dict) -> dict[str, torch.Tensor]:
-        """Train only the dynamics + projection layers; tokenizer is frozen."""
+        """Train dynamics + projection layers; tokenizer trains iff unfrozen.
+
+        When the tokenizer is frozen we regress feats_pred -> feats_target
+        in the codec's feature space (target is the no-grad encoder output).
+        When unfrozen we regress decoded pixels against the raw image, which
+        gives the encoder a real gradient signal — analogous to iVideoGPT's
+        L1+LPIPS pixel reconstruction (we drop LPIPS here to avoid pulling
+        the perceptual model on Machine B's tight render budget).
+        """
         device = self.device
         rgb_np = batch["rgb"]
         actions_np = batch["actions"]
-        x = _rgb_to_tensor(rgb_np, device)
+        x = _rgb_to_tensor(rgb_np, device)  # in [-1, 1]
         a = torch.from_numpy(actions_np).to(device)
         B, Lp1 = x.shape[:2]
         L = Lp1 - 1
@@ -374,13 +408,20 @@ class IVideoGPTBackbone(nn.Module):
         z_flat = self._encode_frames(x_flat)
         z = z_flat.view(B, Lp1, -1)
 
-        # Reconstruction loss through proj_out -> tokenizer.decoder (frozen).
-        with torch.no_grad():
-            feats_target = self.tokenizer.encoder(x_flat)  # (B*Lp1, C, h, w)
         feats_pred = self.proj_out(z_flat).view(
             -1, self._latent_channels, self._spatial, self._spatial
         )
-        recon_loss = F.mse_loss(feats_pred, feats_target)
+
+        if self.cfg.unfreeze_tokenizer:
+            # Pixel-space reconstruction. Tokenizer.decoder is trained
+            # together with the encoder; codebook stays frozen.
+            recon_pixels = self.tokenizer.decoder(feats_pred)  # decoder output in [0, 1]
+            x_pixel = (x_flat + 1.0) * 0.5  # convert [-1, 1] -> [0, 1] for comparison
+            recon_loss = F.mse_loss(recon_pixels, x_pixel)
+        else:
+            with torch.no_grad():
+                feats_target = self.tokenizer.encoder(x_flat)  # (B*Lp1, C, h, w)
+            recon_loss = F.mse_loss(feats_pred, feats_target)
 
         # Dynamics consistency.
         z_curr = z[:, :-1].reshape(B * L, -1)

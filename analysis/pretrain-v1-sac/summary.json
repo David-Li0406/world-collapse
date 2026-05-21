@@ -1,0 +1,38 @@
+{
+  "collapse_prone": {
+    "n_seeds": 3,
+    "entropy_slope_mean": -0.002404063998293796,
+    "entropy_slope_sem": 0.00026589644607620305,
+    "gap_h5_final_mean": 0.018830617268880207,
+    "gap_h5_final_sem": 0.027728471055179386,
+    "visited_h5_slope_mean": 0.00011754824946375723,
+    "underv_h5_slope_mean": 0.00012455079789896797,
+    "trained_final_mean": 0.0,
+    "holdout_final_mean": 0.0,
+    "success_drop_mean": 0.0
+  },
+  "balanced_replay": {
+    "n_seeds": 3,
+    "entropy_slope_mean": -0.0009090412176561775,
+    "entropy_slope_sem": 0.00048664251982246754,
+    "gap_h5_final_mean": 0.0,
+    "gap_h5_final_sem": 0.0,
+    "visited_h5_slope_mean": -0.00012346223478589775,
+    "underv_h5_slope_mean": NaN,
+    "trained_final_mean": 0.0,
+    "holdout_final_mean": 0.0,
+    "success_drop_mean": 0.0
+  },
+  "frozen_wm": {
+    "n_seeds": 3,
+    "entropy_slope_mean": -0.0020310105809604076,
+    "entropy_slope_sem": 0.00014441702623525085,
+    "gap_h5_final_mean": 0.029071778059005737,
+    "gap_h5_final_sem": 0.006316387733114182,
+    "visited_h5_slope_mean": -1.9653968509159744e-07,
+    "underv_h5_slope_mean": -0.00011764375318462244,
+    "trained_final_mean": 0.0,
+    "holdout_final_mean": 0.0,
+    "success_drop_mean": 0.0
+  }
+}

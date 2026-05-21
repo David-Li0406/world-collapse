@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
@@ -131,6 +132,66 @@ def online_loop(
             active_buffer.add_trajectory(tr)
             pretrain_buffer.add_trajectory(tr)
 
+    # Optional imitation warmup (variant B): behaviour-clone the SAC actor on
+    # noiseless scripted demos before the first SAC update so the actor has a
+    # non-trivial starting policy instead of pure Gaussian noise. This gives
+    # the WM-policy feedback something to feed back on.
+    imitation_episodes = int(cfg.get("imitation_warmup_episodes", 0))
+    if imitation_episodes > 0:
+        print(
+            f"[online] imitation warmup: {imitation_episodes} scripted demos + "
+            f"{int(cfg.get('imitation_warmup_steps', 1000))} BC steps",
+            flush=True,
+        )
+        demo_trajs = collect_seed_dataset(
+            env=env,
+            n_episodes=imitation_episodes,
+            scripted_fraction=1.0,
+            scripted_noise=0.0,
+            goal_subregion=trained_subregion if bool(cfg.bias_goal) else None,
+            seed=int(cfg.get("seed", 0)) + 31337,
+        )
+        for tr in demo_trajs:
+            active_buffer.add_trajectory(tr)
+            pretrain_buffer.add_trajectory(tr)
+
+        # Flatten (rgb, action) pairs across demos.
+        import numpy as _np
+        demo_rgbs = _np.concatenate([tr.rgb[:-1] for tr in demo_trajs], axis=0)
+        demo_actions = _np.concatenate([tr.actions for tr in demo_trajs], axis=0)
+        bc_opt = torch.optim.AdamW(actor.parameters(), lr=float(cfg.get("lr_actor_bc", cfg.lr_actor)))
+        bc_steps = int(cfg.get("imitation_warmup_steps", 1000))
+        bc_batch = int(cfg.get("imitation_batch_size", 128))
+        rng = np.random.default_rng(int(cfg.get("seed", 0)) + 4242)
+        N = demo_actions.shape[0]
+        for s in range(bc_steps):
+            idx = rng.integers(0, N, size=bc_batch)
+            rgb_batch = demo_rgbs[idx]
+            act_batch = demo_actions[idx]
+            with torch.no_grad():
+                x = torch.from_numpy(_np.ascontiguousarray(rgb_batch)).to(device).float() / 127.5 - 1.0
+                x = x.permute(0, 3, 1, 2)
+                z = world_model.encoder(x)
+            target = torch.from_numpy(act_batch).to(device).clamp(-0.999, 0.999)
+            sample = actor.sample(z)
+            # Maximize log p(target | z) under the actor's tanh-squashed Gaussian.
+            # Decompose: u = atanh(target), then -0.5*((u - mu)/std)^2 - log_std - log(1 - target^2)
+            u_target = torch.atanh(target)
+            mu, log_std = actor._dist_params(z)
+            log_p = (
+                -0.5 * (((u_target - mu) / log_std.exp()) ** 2)
+                - log_std
+                - 0.5 * torch.log(torch.tensor(2 * torch.pi, device=device))
+            )
+            log_p = log_p.sum(-1) - torch.log(1 - target.pow(2) + 1e-6).sum(-1)
+            bc_loss = -log_p.mean()
+            bc_opt.zero_grad(set_to_none=True)
+            bc_loss.backward()
+            torch.nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
+            bc_opt.step()
+            if s == 0 or (s + 1) % max(1, bc_steps // 5) == 0:
+                print(f"[online] BC step {s+1}/{bc_steps} loss={bc_loss.item():.3f}", flush=True)
+
     for it in range(int(cfg.iterations)):
         # 1) collect real trajectories with the current actor on the trained subregion
         new_trajs = rollout_actor(
@@ -171,7 +232,13 @@ def online_loop(
                     "wm_dyn": float(loss["dynamics"].item()),
                 }
 
-        # 3) reward + semantic head updates — always trained, even under frozen_wm
+        # 3) reward head update (always) + semantic head update (unless frozen).
+        # Variant A (proposal §plan-1+2) freezes the semantic head during Phase B
+        # so the probe-error metric isolates WM drift from head drift. The
+        # reward head must keep training because SAC's MBPO rollouts score
+        # imagined transitions via reward_head — freezing it would stop
+        # the actor from being able to track the changing reward distribution.
+        freeze_sem = bool(cfg.get("freeze_semantic_head", False))
         head_metrics: dict[str, float] = {}
         for _ in range(int(cfg.head_steps)):
             batch = active_buffer.sample_sequences(batch_size=int(cfg.batch_size))
@@ -190,16 +257,28 @@ def online_loop(
             )
             rew_loss.backward()
             rew_opt.step()
-            sem_opt.zero_grad(set_to_none=True)
-            sem_loss = F.mse_loss(
-                semantic_head(z_post.reshape(-1, z_post.shape[-1])),
-                target_semantic.reshape(-1, target_semantic.shape[-1]),
-            )
-            sem_loss.backward()
-            sem_opt.step()
+            if not freeze_sem:
+                sem_opt.zero_grad(set_to_none=True)
+                sem_loss = F.mse_loss(
+                    semantic_head(z_post.reshape(-1, z_post.shape[-1])),
+                    target_semantic.reshape(-1, target_semantic.shape[-1]),
+                )
+                sem_loss.backward()
+                sem_opt.step()
+                sem_value = float(sem_loss.item())
+            else:
+                # Still report the (no-grad) loss so the metric stays comparable across variants.
+                with torch.no_grad():
+                    sem_value = float(
+                        F.mse_loss(
+                            semantic_head(z_post.reshape(-1, z_post.shape[-1])),
+                            target_semantic.reshape(-1, target_semantic.shape[-1]),
+                        ).item()
+                    )
             head_metrics = {
                 "reward_mse": float(rew_loss.item()),
-                "semantic_mse": float(sem_loss.item()),
+                "semantic_mse": sem_value,
+                "freeze_semantic_head": float(freeze_sem),
             }
 
         # 4) actor + twin-Q critic via SAC. Mixes real transitions from the
