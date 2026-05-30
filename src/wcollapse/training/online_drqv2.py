@@ -20,7 +20,10 @@ from __future__ import annotations
 
 # Env vars must be set BEFORE torch/mujoco imports.
 import os
-os.environ.setdefault("MUJOCO_GL", "osmesa")
+os.environ.setdefault("MUJOCO_GL", "egl")
+# EGL on NVIDIA needs the device id to match the CUDA-visible GPU.
+if "CUDA_VISIBLE_DEVICES" in os.environ:
+    os.environ.setdefault("EGL_DEVICE_ID", os.environ["CUDA_VISIBLE_DEVICES"].split(",")[0])
 os.environ["MKL_SERVICE_FORCE_INTEL"] = "1"
 
 import argparse

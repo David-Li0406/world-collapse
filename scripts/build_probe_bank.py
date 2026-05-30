@@ -14,7 +14,9 @@ import argparse
 import os
 from pathlib import Path
 
-os.environ.setdefault("MUJOCO_GL", "osmesa")
+os.environ.setdefault("MUJOCO_GL", "egl")
+if "CUDA_VISIBLE_DEVICES" in os.environ:
+    os.environ.setdefault("EGL_DEVICE_ID", os.environ["CUDA_VISIBLE_DEVICES"].split(",")[0])
 
 import numpy as np
 

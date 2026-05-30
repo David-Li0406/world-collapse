@@ -30,7 +30,7 @@ echo "Preparing dataset at $DATA_ROOT (version $DATA_VERSION)"
 # PyOpenGL+OSMesa import can fail intermittently in fresh venvs even when the
 # real training-time import (with cuda init first) works. We log and continue.
 set +e
-MUJOCO_GL="${MUJOCO_GL:-osmesa}" PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}" uv run python - <<'PY'
+MUJOCO_GL="${MUJOCO_GL:-egl}" EGL_DEVICE_ID="${EGL_DEVICE_ID:-${CUDA_VISIBLE_DEVICES:-0}}" uv run python - <<'PY'
 try:
     import metaworld
     bench = metaworld.MT1("push-v3", seed=0)

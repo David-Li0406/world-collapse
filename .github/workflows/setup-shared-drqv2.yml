@@ -42,8 +42,9 @@ jobs:
           export HF_HOME="$HOME/hf_cache"
           export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
-          export MUJOCO_GL=osmesa
-          export PYOPENGL_PLATFORM=osmesa
+          export MUJOCO_GL=egl
+          export EGL_DEVICE_ID="${CUDA_VISIBLE_DEVICES%%,*}"
+          unset PYOPENGL_PLATFORM
           ./scripts/prepare_data.sh
 
       - name: Stage iVideoGPT pretrained models
@@ -68,8 +69,27 @@ jobs:
         run: |
           export HF_HOME="$HOME/hf_cache"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
-          export MUJOCO_GL=osmesa
-          export PYOPENGL_PLATFORM=osmesa
+          export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
+          export MUJOCO_GL=egl
+          export EGL_DEVICE_ID="${CUDA_VISIBLE_DEVICES%%,*}"
+          unset PYOPENGL_PLATFORM
+          # Diagnostic: confirm mujoco can import + render before we burn time on probe collection.
+          uv run python -c "
+          import os
+          print('MUJOCO_GL=', os.environ.get('MUJOCO_GL'))
+          print('EGL_DEVICE_ID=', os.environ.get('EGL_DEVICE_ID'))
+          print('CUDA_VISIBLE_DEVICES=', os.environ.get('CUDA_VISIBLE_DEVICES'))
+          import mujoco
+          print('mujoco version', mujoco.__version__)
+          import metaworld
+          bench = metaworld.MT1('push-v3', seed=0)
+          env_cls = bench.train_classes['push-v3']
+          env = env_cls(render_mode='rgb_array', camera_name='corner', height=64, width=64)
+          task = next(t for t in bench.train_tasks if t.env_name == 'push-v3')
+          env.set_task(task); env.reset()
+          frame = env.render()
+          print('render OK; shape', getattr(frame, 'shape', None))
+          "
           export PYTHONUNBUFFERED=1
           export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
           export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
@@ -97,8 +117,10 @@ jobs:
         run: |
           export HF_HOME="$HOME/hf_cache"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
-          export MUJOCO_GL=osmesa
-          export PYOPENGL_PLATFORM=osmesa
+          export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
+          export MUJOCO_GL=egl
+          export EGL_DEVICE_ID="${CUDA_VISIBLE_DEVICES%%,*}"
+          unset PYOPENGL_PLATFORM
           export PYTHONUNBUFFERED=1
           export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
           export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
