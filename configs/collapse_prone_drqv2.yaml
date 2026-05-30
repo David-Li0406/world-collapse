@@ -1,0 +1,10 @@
+# Phase B / collapse_prone:
+#   - bias_goal=true (data collection restricted to trained sub-region)
+#   - WM trained ONLY on recency-windowed online buffer (no D_real_R0 replay)
+# Hypothesis: WM forgets the held-out subregion; policy SR drops there.
+
+num_train_frames: 20000
+eval_every_frames: 2000
+bias_goal: true
+bias_fraction: 0.5
+recent_window: 5000

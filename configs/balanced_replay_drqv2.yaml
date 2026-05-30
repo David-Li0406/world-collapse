@@ -1,0 +1,9 @@
+# Phase B / balanced_replay:
+#   - bias_goal=true (same data collection as collapse_prone)
+#   - WM trained on 50/50 mix of D_real_R0 + online buffer
+# Tests whether broad replay preserves WM coverage despite biased collection.
+
+num_train_frames: 20000
+eval_every_frames: 2000
+bias_goal: true
+bias_fraction: 0.5

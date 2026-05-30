@@ -1,0 +1,100 @@
+# Base config for the DrQ-v2 + VideoPredictor pipeline.
+# Mirrors wmcollapse/ivideogpt/mbrl/cfgs/mbpo_config.yaml on the training side,
+# with our push-v3 task settings + world-collapse measurement knobs added.
+#
+# Overlays:
+#   round0_drqv2.yaml          -> long training, no bias_goal, no probe eval
+#   collapse_prone_drqv2.yaml  -> bias_goal=true, recent_window=5000 (Phase B)
+#   balanced_replay_drqv2.yaml -> bias_goal=true, balanced WM data mix (Phase B)
+#   frozen_wm_drqv2.yaml       -> bias_goal=true, WM not updated (Phase B)
+
+seed: 1
+device: cuda
+
+# ---- task / env (push-v3 via our dm_env adapter) ----
+task_name: push-v3
+camera: corner
+duration: 100                    # raw env steps per episode (50 control steps at action_repeat=2)
+succ_bonus: 10.0
+frame_stack: 3
+action_repeat: 2
+discount: 0.99
+
+# ---- training budget ----
+num_train_frames: 50000          # round-0 default; Phase B overlays shrink this
+num_seed_frames: 4000
+eval_every_frames: 5000
+num_eval_episodes: 10
+
+save_snapshot: true
+replay_buffer_size: 1000000
+replay_buffer_num_workers: 1
+nstep: 3
+batch_size: 256
+
+# ---- DrQ-v2 agent ----
+lr: 1.0e-4
+feature_dim: 50
+agent_update_times: 2
+agent:
+  device: ${device}
+  lr: ${lr}
+  critic_target_tau: 0.01
+  update_every_steps: 1
+  num_expl_steps: 2000
+  hidden_dim: 1024
+  feature_dim: ${feature_dim}
+  stddev_schedule: 'linear(1.0, 0.1, 100000)'
+  stddev_clip: 0.3
+  beta: 0.0
+  delay_steps: 1
+
+# ---- MBPO cadence (wmcollapse defaults) ----
+gen_every_steps: 200
+gen_batch: 32
+gen_horizon: 10
+update_gen_every_step: 10
+update_tokenizer_every_step: 40
+update_gen_times: 1
+init_update_gen_steps: 1000
+init_gen_times: 20
+real_ratio: 0.5
+start_mbpo: 4000
+
+# ---- VideoPredictor world model (iVideoGPT OXE 64 act-free) ----
+world_model:
+  load_pretrained_model: true
+  config_name: ${oc.env:IVIDEOGPT_ROOT}/configs/llama/config.json
+  vqgan_type: ctx_vqgan
+  pretrained_model_name_or_path: ${oc.env:IVIDEOGPT_ROOT}/pretrained_models/ivideogpt-oxe-64-act-free/tokenizer
+  pretrained_transformer_path: ${oc.env:IVIDEOGPT_ROOT}/pretrained_models/ivideogpt-oxe-64-act-free/transformer
+  load_internal_llm: true
+  llama_attn_drop: 0.1
+  fast_reward_predictor: false
+  symlog: true
+  context_length: 2
+  segment_length: 12
+  action_dim: 4
+  batch_size: 16
+  selected_params: true
+  tok_lr: 1.0e-4
+  tok_wd: 0.0
+  tok_beta1: 0.9
+  tok_beta2: 0.999
+  max_grad_norm: 1.0
+  max_target_frames: 5
+  model_lr: 1.0e-4
+  model_wd: 0.0
+  embed_no_wd: true
+  reward_lr: 1.0e-4
+  reward_wd: 1.0e-6
+  reward_weight: 1.0
+
+# ---- world-collapse measurement (Phase B only — overlays enable) ----
+bias_goal: false
+bias_fraction: 0.5
+recent_window: 5000             # only used by collapse_prone
+coverage_bins: 20
+density_floor: 1.0e-4
+visited_radius: 0.05
+static_goal_split: 0.0

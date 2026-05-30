@@ -1,0 +1,165 @@
+name: setup-shared-drqv2
+
+# One-time setup for the DrQ-v2 + VideoPredictor pipeline.
+# Builds the shared probe bank then runs round-0 MBPO. Both outputs are
+# promoted to $HOME/wcollapse-shared/drqv2/<run_name>/ on the runner so
+# the Phase B workflow can mount them by path without re-doing the work.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_name:
+        description: "Shared setup run name"
+        required: true
+        default: "drqv2-v1"
+      smoke:
+        description: "If true, use debug overlay (~10 min instead of ~2-3 h)"
+        required: false
+        default: "false"
+
+jobs:
+  run:
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show machine info
+        run: |
+          hostname
+          nvidia-smi -L || true
+
+      - name: Setup uv environment
+        run: |
+          export UV_CACHE_DIR="$HOME/.cache/uv"
+          uv sync --frozen
+
+      - name: Prepare data
+        run: |
+          export DATA_ROOT="$HOME/datasets/world-collapse"
+          export HF_HOME="$HOME/hf_cache"
+          export HF_DATASETS_CACHE="$HOME/hf_cache/datasets"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL=osmesa
+          export PYOPENGL_PLATFORM=osmesa
+          ./scripts/prepare_data.sh
+
+      - name: Stage iVideoGPT pretrained models
+        run: |
+          export HF_HOME="$HOME/hf_cache"
+          DEST="iVideoGPT/pretrained_models/ivideogpt-oxe-64-act-free"
+          if [ -f "$DEST/tokenizer/diffusion_pytorch_model.safetensors" ] && \
+             [ -f "$DEST/transformer/model.safetensors" ]; then
+            echo "pretrained_models already staged at $DEST"
+          else
+            mkdir -p "$DEST"
+            uv run python -c "
+          from huggingface_hub import snapshot_download
+          path = snapshot_download(repo_id='thuml/ivideogpt-oxe-64-act-free', local_dir='$DEST', local_dir_use_symlinks=True)
+          print('Staged to', path)
+          "
+          fi
+          ls -la "$DEST" "$DEST/tokenizer" "$DEST/transformer"
+
+      - name: Build probe bank
+        shell: bash -eo pipefail {0}
+        run: |
+          export HF_HOME="$HOME/hf_cache"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL=osmesa
+          export PYOPENGL_PLATFORM=osmesa
+          export PYTHONUNBUFFERED=1
+          export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
+          export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
+
+          OUT="runs/${{ inputs.run_name }}"
+          mkdir -p "$OUT"
+
+          if [ "${{ inputs.smoke }}" = "true" ]; then
+            N_EPS=20; N_PROBES=24
+          else
+            N_EPS=100; N_PROBES=192
+          fi
+
+          uv run python -u scripts/build_probe_bank.py \
+            --task push-v3 \
+            --n_seed_episodes "$N_EPS" \
+            --n_probes "$N_PROBES" \
+            --horizon 15 \
+            --seed 42 \
+            --output "$OUT/probe_bank.h5" \
+            2>&1 | tee "$OUT/probe_bank.log"
+
+      - name: Round-0 MBPO
+        shell: bash -eo pipefail {0}
+        run: |
+          export HF_HOME="$HOME/hf_cache"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL=osmesa
+          export PYOPENGL_PLATFORM=osmesa
+          export PYTHONUNBUFFERED=1
+          export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
+          export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
+          export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
+
+          OUT="runs/${{ inputs.run_name }}/round0"
+          mkdir -p "$OUT"
+
+          TMP_CFG="$(mktemp -t drqv2_round0.XXXXXX.yaml)"
+          if [ "${{ inputs.smoke }}" = "true" ]; then
+            uv run python -c "
+          from omegaconf import OmegaConf
+          base = OmegaConf.load('configs/drqv2_base.yaml')
+          o1 = OmegaConf.load('configs/round0_drqv2.yaml')
+          o2 = OmegaConf.load('configs/debug_drqv2.yaml')
+          OmegaConf.save(OmegaConf.merge(base, o1, o2), '${TMP_CFG}')"
+          else
+            uv run python -c "
+          from omegaconf import OmegaConf
+          base = OmegaConf.load('configs/drqv2_base.yaml')
+          o1 = OmegaConf.load('configs/round0_drqv2.yaml')
+          OmegaConf.save(OmegaConf.merge(base, o1), '${TMP_CFG}')"
+          fi
+
+          uv run python -u -m wcollapse.training.online_drqv2 \
+            --mode round0 \
+            --config "${TMP_CFG}" \
+            --output_dir "$OUT" \
+            2>&1 | tee "$OUT/train.log"
+
+          rm -f "${TMP_CFG}"
+
+      - name: Promote to shared dir
+        shell: bash -eo pipefail {0}
+        run: |
+          SHARED="$HOME/wcollapse-shared/drqv2/${{ inputs.run_name }}"
+          rm -rf "$SHARED"
+          mkdir -p "$(dirname "$SHARED")"
+          cp -r "runs/${{ inputs.run_name }}" "$SHARED"
+          echo "[setup-shared-drqv2] persistent copy at $SHARED"
+          ls -la "$SHARED"
+          ls -la "$SHARED/round0"
+
+      - name: Write summary
+        if: always()
+        run: |
+          {
+            echo "## Setup summary"
+            echo "- Run name: ${{ inputs.run_name }}"
+            echo "- Smoke: ${{ inputs.smoke }}"
+            echo "- Shared dir: \$HOME/wcollapse-shared/drqv2/${{ inputs.run_name }}"
+            echo "- Commit: $(git rev-parse HEAD)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.run_name }}
+          path: |
+            runs/${{ inputs.run_name }}/probe_bank.log
+            runs/${{ inputs.run_name }}/round0/train.log
+            runs/${{ inputs.run_name }}/round0/metrics.jsonl
+            runs/${{ inputs.run_name }}/round0/config.yaml

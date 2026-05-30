@@ -1,0 +1,18 @@
+# Smoke-test overlay: tiny budget that exercises every code path quickly.
+# Use with --mode round0 (no condition) or --mode online --condition X.
+
+seed: 42
+num_train_frames: 2000
+num_seed_frames: 200
+eval_every_frames: 500
+num_eval_episodes: 2
+start_mbpo: 200
+init_update_gen_steps: 20
+init_gen_times: 2
+gen_every_steps: 50
+update_gen_every_step: 5
+update_tokenizer_every_step: 20
+batch_size: 32
+world_model:
+  batch_size: 4
+recent_window: 1000

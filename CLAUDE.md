@@ -1,3 +1,5 @@
+Use GPU 4-7 in the Machine B
+
 # GitHub Actions GPU Runner Instructions
 
 This project uses two machines:

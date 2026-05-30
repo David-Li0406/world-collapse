@@ -1,0 +1,158 @@
+name: run-conditions-drqv2
+
+# Phase B fanout for the DrQ-v2 + VideoPredictor pipeline.
+# Loads (WM_0, Policy_0, D_real_R0) + probe bank from $HOME/wcollapse-shared/drqv2/<setup_run>/
+# and runs each (condition × seed) sequentially on round-robin GPUs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      setup_run:
+        description: "setup-shared-drqv2 run name to mount"
+        required: true
+        default: "drqv2-v1"
+      run_name:
+        description: "Phase B run name prefix"
+        required: true
+        default: "phaseB-v1"
+      conditions:
+        description: "Comma list of conditions: collapse_prone,balanced_replay,frozen_wm"
+        required: true
+        default: "collapse_prone,balanced_replay,frozen_wm"
+      seeds:
+        description: "Comma list of seeds (e.g. 1,2,3)"
+        required: true
+        default: "1"
+      smoke:
+        description: "If true, use debug overlay"
+        required: false
+        default: "false"
+
+jobs:
+  run:
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show machine info + verify shared dir
+        run: |
+          hostname
+          nvidia-smi -L || true
+          SHARED="$HOME/wcollapse-shared/drqv2/${{ inputs.setup_run }}"
+          test -d "$SHARED/round0" || { echo "missing $SHARED/round0"; exit 1; }
+          test -f "$SHARED/probe_bank.h5" || { echo "missing $SHARED/probe_bank.h5"; exit 1; }
+          ls -la "$SHARED/round0"
+
+      - name: Setup uv environment
+        run: |
+          export UV_CACHE_DIR="$HOME/.cache/uv"
+          uv sync --frozen
+
+      - name: Stage iVideoGPT pretrained models
+        run: |
+          export HF_HOME="$HOME/hf_cache"
+          DEST="iVideoGPT/pretrained_models/ivideogpt-oxe-64-act-free"
+          if [ ! -f "$DEST/tokenizer/diffusion_pytorch_model.safetensors" ] || \
+             [ ! -f "$DEST/transformer/model.safetensors" ]; then
+            mkdir -p "$DEST"
+            uv run python -c "
+          from huggingface_hub import snapshot_download
+          snapshot_download(repo_id='thuml/ivideogpt-oxe-64-act-free', local_dir='$DEST', local_dir_use_symlinks=True)
+          "
+          fi
+          ls -la "$DEST/tokenizer" "$DEST/transformer" | head -10
+
+      - name: Run Phase B fanout
+        shell: bash -eo pipefail {0}
+        run: |
+          export HF_HOME="$HOME/hf_cache"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL=osmesa
+          export PYOPENGL_PLATFORM=osmesa
+          export PYTHONUNBUFFERED=1
+          export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
+          export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
+
+          SHARED="$HOME/wcollapse-shared/drqv2/${{ inputs.setup_run }}"
+          ROUND0="$SHARED/round0"
+          PROBE="$SHARED/probe_bank.h5"
+
+          IFS=',' read -ra CONDS <<< "${{ inputs.conditions }}"
+          IFS=',' read -ra SEEDS <<< "${{ inputs.seeds }}"
+
+          # GPU round-robin over the 4 reserved cards (per project CLAUDE.md).
+          GPUS=(4 5 6 7)
+          PIDS=()
+          IDX=0
+          for cond in "${CONDS[@]}"; do
+            for seed in "${SEEDS[@]}"; do
+              GPU="${GPUS[$(( IDX % ${#GPUS[@]} ))]}"
+              IDX=$(( IDX + 1 ))
+              OUT="runs/${{ inputs.run_name }}/${cond}-seed${seed}"
+              mkdir -p "$OUT"
+
+              TMP_CFG="$(mktemp -t drqv2_${cond}_s${seed}.XXXXXX.yaml)"
+              if [ "${{ inputs.smoke }}" = "true" ]; then
+                uv run python -c "
+          from omegaconf import OmegaConf
+          base = OmegaConf.load('configs/drqv2_base.yaml')
+          o1 = OmegaConf.load('configs/${cond}_drqv2.yaml')
+          o2 = OmegaConf.load('configs/debug_drqv2.yaml')
+          OmegaConf.save(OmegaConf.merge(base, o1, o2), '${TMP_CFG}')"
+              else
+                uv run python -c "
+          from omegaconf import OmegaConf
+          base = OmegaConf.load('configs/drqv2_base.yaml')
+          o1 = OmegaConf.load('configs/${cond}_drqv2.yaml')
+          OmegaConf.save(OmegaConf.merge(base, o1), '${TMP_CFG}')"
+              fi
+
+              echo "[fanout] launching ${cond} seed=${seed} on GPU ${GPU} -> ${OUT}"
+              CUDA_VISIBLE_DEVICES="${GPU}" uv run python -u -m wcollapse.training.online_drqv2 \
+                --mode online \
+                --condition "${cond}" \
+                --config "${TMP_CFG}" \
+                --overrides seed=${seed} \
+                --output_dir "${OUT}" \
+                --round0_dir "${ROUND0}" \
+                --probe_bank_path "${PROBE}" \
+                > "${OUT}/train.log" 2>&1 &
+              PIDS+=($!)
+            done
+          done
+
+          echo "[fanout] launched ${#PIDS[@]} jobs; waiting..."
+          FAIL=0
+          for pid in "${PIDS[@]}"; do
+            if ! wait "$pid"; then
+              FAIL=$((FAIL + 1))
+            fi
+          done
+          echo "[fanout] done. failures: $FAIL"
+          if [ "$FAIL" -gt 0 ]; then exit 1; fi
+
+      - name: Write summary
+        if: always()
+        run: |
+          {
+            echo "## Phase B fanout"
+            echo "- Setup run: ${{ inputs.setup_run }}"
+            echo "- Run name:  ${{ inputs.run_name }}"
+            echo "- Conditions: ${{ inputs.conditions }}"
+            echo "- Seeds:     ${{ inputs.seeds }}"
+            echo "- Smoke:     ${{ inputs.smoke }}"
+            echo "- Commit:    $(git rev-parse HEAD)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.run_name }}
+          path: |
+            runs/${{ inputs.run_name }}/**/train.log
+            runs/${{ inputs.run_name }}/**/metrics.jsonl
+            runs/${{ inputs.run_name }}/**/config.yaml

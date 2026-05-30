@@ -10,6 +10,8 @@ __pycache__/
 # tests/data, or any other nested 'data' directory inside the project.
 /runs/
 /downloaded_runs/
+# Reference vendored research repo on Machine A; used via PYTHONPATH only.
+/wmcollapse/
 /wandb/
 /data/
 /datasets/

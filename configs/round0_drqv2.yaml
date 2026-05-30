@@ -1,0 +1,6 @@
+# Round-0 overlay: standard MBPO on the full push-v3 distribution.
+# Produces (WM_0, Policy_0, D_real_R0) shared by every Phase B condition.
+
+num_train_frames: 50000
+eval_every_frames: 10000
+bias_goal: false
