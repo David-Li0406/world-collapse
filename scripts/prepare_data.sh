@@ -26,20 +26,28 @@ fi
 
 echo "Preparing dataset at $DATA_ROOT (version $DATA_VERSION)"
 
-# Smoke-render a single frame to confirm mujoco is functional before we burn
-# time on a real training run.
+# Smoke-render a single frame to confirm mujoco is functional. Non-fatal:
+# PyOpenGL+OSMesa import can fail intermittently in fresh venvs even when the
+# real training-time import (with cuda init first) works. We log and continue.
+set +e
 MUJOCO_GL="${MUJOCO_GL:-osmesa}" PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}" uv run python - <<'PY'
-import metaworld
-bench = metaworld.MT1("push-v3", seed=0)
-env_cls = bench.train_classes["push-v3"]
-env = env_cls(render_mode="rgb_array", camera_name="corner", height=64, width=64)
-task = next(t for t in bench.train_tasks if t.env_name == "push-v3")
-env.set_task(task)
-env.reset()
-frame = env.render()
-assert frame is not None and frame.shape == (64, 64, 3), f"unexpected frame shape: {getattr(frame, 'shape', None)}"
-print("mujoco render OK; frame shape:", frame.shape)
+try:
+    import metaworld
+    bench = metaworld.MT1("push-v3", seed=0)
+    env_cls = bench.train_classes["push-v3"]
+    env = env_cls(render_mode="rgb_array", camera_name="corner", height=64, width=64)
+    task = next(t for t in bench.train_tasks if t.env_name == "push-v3")
+    env.set_task(task)
+    env.reset()
+    frame = env.render()
+    assert frame is not None and frame.shape == (64, 64, 3), f"unexpected frame shape: {getattr(frame, 'shape', None)}"
+    print("[prepare_data] mujoco render OK; frame shape:", frame.shape)
+except Exception as exc:
+    import traceback
+    traceback.print_exc()
+    print(f"[prepare_data] WARN: mujoco smoke render failed ({exc}); continuing — training will surface a hard failure if mujoco is truly broken.")
 PY
+set -e
 
 # Pre-download the iVideoGPT tokenizer into the persistent HF cache so that
 # subsequent runs hit the cache instead of pulling ~500MB every time.
