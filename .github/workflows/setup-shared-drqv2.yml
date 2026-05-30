@@ -64,6 +64,18 @@ jobs:
           fi
           ls -la "$DEST" "$DEST/tokenizer" "$DEST/transformer"
 
+      - name: Probe render backends
+        run: |
+          echo "--- EGL ICD configs ---"
+          ls -la /usr/share/glvnd/egl_vendor.d/ 2>&1 || echo "no glvnd dir"
+          echo "--- OSMesa libs ---"
+          ldconfig -p 2>/dev/null | grep -i osmesa || echo "no libOSMesa in ldconfig"
+          ls -la /usr/lib*/libOSMesa* /usr/lib*/x86_64-linux-gnu/libOSMesa* 2>&1 || true
+          echo "--- NVIDIA EGL ---"
+          ls -la /usr/lib*/libEGL_nvidia* /usr/lib*/x86_64-linux-gnu/libEGL_nvidia* 2>&1 || true
+          echo "--- DRI cards ---"
+          ls -la /dev/dri/ 2>&1 || echo "no /dev/dri"
+
       - name: Build probe bank
         shell: bash -eo pipefail {0}
         run: |
@@ -73,12 +85,19 @@ jobs:
           export MUJOCO_GL=egl
           export EGL_DEVICE_ID="${CUDA_VISIBLE_DEVICES%%,*}"
           unset PYOPENGL_PLATFORM
+          # Force NVIDIA EGL ICD (Mesa libEGL chains to nouveau and fails on /dev/dri).
+          if [ -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ]; then
+            export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+            export __GLX_VENDOR_LIBRARY_NAME=nvidia
+            echo "Forced NVIDIA EGL ICD"
+          fi
           # Diagnostic: confirm mujoco can import + render before we burn time on probe collection.
           uv run python -c "
           import os
           print('MUJOCO_GL=', os.environ.get('MUJOCO_GL'))
           print('EGL_DEVICE_ID=', os.environ.get('EGL_DEVICE_ID'))
           print('CUDA_VISIBLE_DEVICES=', os.environ.get('CUDA_VISIBLE_DEVICES'))
+          print('__EGL_VENDOR_LIBRARY_FILENAMES=', os.environ.get('__EGL_VENDOR_LIBRARY_FILENAMES'))
           import mujoco
           print('mujoco version', mujoco.__version__)
           import metaworld
