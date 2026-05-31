@@ -62,6 +62,7 @@ from tqdm import trange
 
 # wmcollapse imports
 import drq_utils
+import replay_buffer as _rb
 from replay_buffer import (
     ReplayBufferStorage,
     make_replay_loader,
@@ -69,6 +70,15 @@ from replay_buffer import (
 )
 from video_predictor import VideoPredictor
 from drqv2 import DrQV2Agent
+
+# Patch upstream worker init: it does `np.random.get_state()[1][0] + worker_id`
+# which yields a numpy uint32 that Python 3.12's random.seed() rejects.
+import random as _random
+def _worker_init_fn(worker_id: int) -> None:
+    seed = int(np.random.get_state()[1][0]) + int(worker_id)
+    np.random.seed(seed)
+    _random.seed(seed)
+_rb._worker_init_fn = _worker_init_fn
 
 from wcollapse.envs.metaworld_dmenv import make as make_dmenv
 from wcollapse.data.probe_bank import load_probe_bank, ProbeBank
