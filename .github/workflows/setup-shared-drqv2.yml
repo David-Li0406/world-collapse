@@ -137,17 +137,12 @@ jobs:
           # than Mesa, which needs /dev/dri/card* the runner can't open).
           NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
           if [ -n "$NVIDIA_PREFIX" ]; then
-            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
+            # Include /usr/lib64 so NVIDIA's supporting libs (libnvidia-glsi,
+            # libnvidia-eglcore, etc.) installed system-wide can be resolved
+            # when libEGL_nvidia.so dlopens its dependencies.
+            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
             export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
             export __GLX_VENDOR_LIBRARY_NAME=nvidia
-            # Prefer NVIDIA's own libEGL.so if shipped; otherwise dlopen the ICD
-            # lib directly (PLATFORM_DEVICE bypasses glvnd dispatch).
-            if [ -e "${NVIDIA_PREFIX}/lib64/libEGL.so.1" ]; then
-              export MUJOCO_EGL_LIBRARY="${NVIDIA_PREFIX}/lib64/libEGL.so.1"
-            elif [ -e "${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0" ]; then
-              export MUJOCO_EGL_LIBRARY="${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0"
-            fi
-            echo "MUJOCO_EGL_LIBRARY=${MUJOCO_EGL_LIBRARY:-(default libEGL.so.1)}"
             echo "Using NVIDIA EGL from $NVIDIA_PREFIX"
           else
             echo "WARN: no /opt/nvidia-* found"
