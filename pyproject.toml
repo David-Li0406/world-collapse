@@ -30,9 +30,13 @@ dependencies = [
     "accelerate>=0.27",
     "safetensors>=0.4",
     "huggingface-hub>=0.20",
-    # wmcollapse's drq_utils / metaworld_env / replay_buffer use the dm_env API.
-    "dm-env>=1.6",
-    "hydra-core>=1.3",
+    # iVideoGPT mbrl/ vendored modules need these:
+    "dm-env>=1.6",       # drq_utils, metaworld_env, replay_buffer
+    "hydra-core>=1.3",   # train_metaworld_mbpo (we don't use the Workspace, but transitively imported)
+    "opencv-python-headless>=4.8",   # video_predictor + video
+    "termcolor>=2.4",    # logger
+    "gym>=0.26,<1.0",    # iVideoGPT's metaworld_env imports the old gym package
+    "tensorboard>=2.16", # logger imports torch.utils.tensorboard
 ]
 
 [project.optional-dependencies]
