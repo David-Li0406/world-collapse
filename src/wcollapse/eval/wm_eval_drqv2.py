@@ -50,7 +50,11 @@ def _predict_rollout_pixels(
 
     Uses VideoPredictor.rollout with a teacher-forced policy closure.
     """
-    video_predictor.eval()
+    # VideoPredictor overrides .train(batch, ...) with a WM update step, so
+    # nn.Module.eval() (which calls self.train(False)) tries to unpack a bool
+    # as a batch. Use the unbound Module.train to flip eval mode directly.
+    import torch.nn as _nn
+    _nn.Module.train(video_predictor, False)
     N = len(bank)
     if N == 0:
         return np.zeros((0, horizon + 1, 64, 64, 3), dtype=np.uint8)
