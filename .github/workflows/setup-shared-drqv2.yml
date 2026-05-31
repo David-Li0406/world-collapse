@@ -137,16 +137,15 @@ jobs:
           # than Mesa, which needs /dev/dri/card* the runner can't open).
           NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
           if [ -n "$NVIDIA_PREFIX" ]; then
-            # Include /usr/lib64 so NVIDIA's supporting libs (libnvidia-glsi,
-            # libnvidia-eglcore, etc.) installed system-wide can be resolved
-            # when libEGL_nvidia.so dlopens its dependencies.
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
             export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
             export __EGL_VENDOR_LIBRARY_DIRS="${NVIDIA_PREFIX}/egl_vendor.d"
             export __GLX_VENDOR_LIBRARY_NAME=nvidia
-            echo "Using NVIDIA EGL from $NVIDIA_PREFIX"
-          else
-            echo "WARN: no /opt/nvidia-* found"
+            # LD_PRELOAD primes the in-process ICD before any Python import.
+            # The probe step showed glvnd dispatches NVIDIA only when the ICD
+            # is already in-process; preloading guarantees that.
+            export LD_PRELOAD="${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0${LD_PRELOAD:+:$LD_PRELOAD}"
+            echo "Using NVIDIA EGL from $NVIDIA_PREFIX (LD_PRELOAD primed)"
           fi
           # Diagnostic: confirm mujoco can import + render before we burn time on probe collection.
           uv run python -c "
