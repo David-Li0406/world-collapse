@@ -85,6 +85,33 @@ jobs:
           id; getent group video render 2>&1 || true
           echo "--- nvidia-smi driver ---"
           nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>&1 | head -1
+          echo "--- /dev/nvidia* ---"
+          ls -la /dev/nvidia* 2>&1 || echo "no /dev/nvidia* devices"
+          echo "--- libEGL.so.1 deps (glvnd marker = depends on libGLdispatch) ---"
+          ldd /usr/lib64/libEGL.so.1 2>&1 | head -10
+          echo "--- eglinfo if available ---"
+          which eglinfo 2>&1 || echo "no eglinfo"
+          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
+          if [ -n "$NVIDIA_PREFIX" ]; then
+            echo "--- minimal EGL device-init probe via NVIDIA ICD ---"
+            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
+            export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
+            uv run python - <<'PY' || true
+          import os, ctypes, ctypes.util
+          print("LD_LIBRARY_PATH=", os.environ.get("LD_LIBRARY_PATH"))
+          print("__EGL_VENDOR_LIBRARY_FILENAMES=", os.environ.get("__EGL_VENDOR_LIBRARY_FILENAMES"))
+          for cand in ("libEGL.so.1", "/usr/lib64/libEGL.so.1"):
+              try:
+                  egl = ctypes.cdll.LoadLibrary(cand)
+                  print(cand, "loaded:", egl)
+                  egl.eglQueryString.restype = ctypes.c_char_p
+                  print("  EGL_VERSION (no display):", egl.eglQueryString(0, 0x3054))
+                  print("  EGL_EXTENSIONS  :", egl.eglQueryString(0, 0x3055))
+                  break
+              except OSError as e:
+                  print(cand, "FAILED:", e)
+          PY
+          fi
 
       - name: Build probe bank
         shell: bash -eo pipefail {0}
