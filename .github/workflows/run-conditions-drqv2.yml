@@ -77,9 +77,7 @@ jobs:
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
             export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
             export __EGL_VENDOR_LIBRARY_DIRS="${NVIDIA_PREFIX}/egl_vendor.d"
-            export __GLX_VENDOR_LIBRARY_NAME=nvidia
-            export LD_PRELOAD="${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0${LD_PRELOAD:+:$LD_PRELOAD}"
-            echo "Using NVIDIA EGL from $NVIDIA_PREFIX (LD_PRELOAD primed)"
+            echo "Using NVIDIA EGL from $NVIDIA_PREFIX"
           fi
           export PYTHONUNBUFFERED=1
           export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"

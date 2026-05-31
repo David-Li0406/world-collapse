@@ -143,31 +143,11 @@ jobs:
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
             export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
             export __EGL_VENDOR_LIBRARY_DIRS="${NVIDIA_PREFIX}/egl_vendor.d"
-            export __GLX_VENDOR_LIBRARY_NAME=nvidia
-            # LD_PRELOAD primes the in-process ICD before any Python import.
-            # The probe step showed glvnd dispatches NVIDIA only when the ICD
-            # is already in-process; preloading guarantees that.
-            export LD_PRELOAD="${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0${LD_PRELOAD:+:$LD_PRELOAD}"
-            echo "Using NVIDIA EGL from $NVIDIA_PREFIX (LD_PRELOAD primed)"
+            echo "Using NVIDIA EGL from $NVIDIA_PREFIX"
           fi
-          # Diagnostic: confirm mujoco can import + render before we burn time on probe collection.
-          uv run python -c "
-          import os
-          print('MUJOCO_GL=', os.environ.get('MUJOCO_GL'))
-          print('EGL_DEVICE_ID=', os.environ.get('EGL_DEVICE_ID'))
-          print('CUDA_VISIBLE_DEVICES=', os.environ.get('CUDA_VISIBLE_DEVICES'))
-          print('__EGL_VENDOR_LIBRARY_FILENAMES=', os.environ.get('__EGL_VENDOR_LIBRARY_FILENAMES'))
-          import mujoco
-          print('mujoco version', mujoco.__version__)
-          import metaworld
-          bench = metaworld.MT1('push-v3', seed=0)
-          env_cls = bench.train_classes['push-v3']
-          env = env_cls(render_mode='rgb_array', camera_name='corner', height=64, width=64)
-          task = next(t for t in bench.train_tasks if t.env_name == 'push-v3')
-          env.set_task(task); env.reset()
-          frame = env.render()
-          print('render OK; shape', getattr(frame, 'shape', None))
-          "
+          # (Skipping inline render diagnostic — build_probe_bank.py does its
+          # own NVIDIA EGL preload before mujoco import. If it fails, the
+          # script's own traceback is what we'll see.)
           export PYTHONUNBUFFERED=1
           export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
           export IVIDEOGPT_ROOT="$PWD/iVideoGPT"

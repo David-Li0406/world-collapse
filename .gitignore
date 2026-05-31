@@ -27,3 +27,4 @@ dist/
 
 # uv
 .python-version
+.claude/
