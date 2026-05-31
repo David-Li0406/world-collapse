@@ -129,7 +129,10 @@ jobs:
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
           export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
           export MUJOCO_GL=egl
-          export EGL_DEVICE_ID="${CUDA_VISIBLE_DEVICES%%,*}"
+          # CUDA_VISIBLE_DEVICES already restricts visibility to one GPU; EGL
+          # enumerates that GPU at index 0 inside the process. Setting
+          # EGL_DEVICE_ID to the global GPU index is out-of-range.
+          export EGL_DEVICE_ID=0
           unset PYOPENGL_PLATFORM
           # NVIDIA EGL ICD lives under /opt/nvidia-* on this runner; put its lib
           # dir on LD_LIBRARY_PATH and point glvnd at the right ICD JSON so
@@ -194,7 +197,10 @@ jobs:
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
           export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
           export MUJOCO_GL=egl
-          export EGL_DEVICE_ID="${CUDA_VISIBLE_DEVICES%%,*}"
+          # CUDA_VISIBLE_DEVICES already restricts visibility to one GPU; EGL
+          # enumerates that GPU at index 0 inside the process. Setting
+          # EGL_DEVICE_ID to the global GPU index is out-of-range.
+          export EGL_DEVICE_ID=0
           unset PYOPENGL_PLATFORM
           NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
           if [ -n "$NVIDIA_PREFIX" ]; then

@@ -15,8 +15,7 @@ import os
 from pathlib import Path
 
 os.environ.setdefault("MUJOCO_GL", "egl")
-if "CUDA_VISIBLE_DEVICES" in os.environ:
-    os.environ.setdefault("EGL_DEVICE_ID", os.environ["CUDA_VISIBLE_DEVICES"].split(",")[0])
+os.environ.setdefault("EGL_DEVICE_ID", "0")
 
 # Pre-load NVIDIA EGL ICD so glvnd dispatches to it (cdll.LoadLibrary primes
 # the in-process ICD registry; otherwise glvnd silently falls back to Mesa

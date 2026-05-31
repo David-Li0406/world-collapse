@@ -120,7 +120,7 @@ jobs:
               fi
 
               echo "[fanout] launching ${cond} seed=${seed} on GPU ${GPU} -> ${OUT}"
-              CUDA_VISIBLE_DEVICES="${GPU}" EGL_DEVICE_ID="${GPU}" uv run python -u -m wcollapse.training.online_drqv2 \
+              CUDA_VISIBLE_DEVICES="${GPU}" EGL_DEVICE_ID=0 uv run python -u -m wcollapse.training.online_drqv2 \
                 --mode online \
                 --condition "${cond}" \
                 --config "${TMP_CFG}" \
