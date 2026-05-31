@@ -72,6 +72,13 @@ jobs:
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
           export MUJOCO_GL=egl
           unset PYOPENGL_PLATFORM
+          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
+          if [ -n "$NVIDIA_PREFIX" ]; then
+            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
+            export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
+            export __GLX_VENDOR_LIBRARY_NAME=nvidia
+            echo "Using NVIDIA EGL from $NVIDIA_PREFIX"
+          fi
           export PYTHONUNBUFFERED=1
           export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
           export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
