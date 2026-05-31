@@ -341,10 +341,19 @@ def run(
     def generate_inloop(global_step: int):
         batch = get_next("real_pol")
         policy_fn = lambda obs, _t: agent.act2(obs, max(global_step - 1, 0), eval_mode=False)
-        with torch.no_grad():
-            obss, actions, rewards = video_predictor.rollout(
-                batch[0][: int(cfg.gen_batch)], policy_fn, int(cfg.gen_horizon),
-            )
+        # bf16 autocast generation can produce NaN logits → torch.multinomial
+        # CUDA assert. Skip this rollout on failure rather than killing the run;
+        # the next call after more WM training usually succeeds.
+        try:
+            with torch.no_grad():
+                obss, actions, rewards = video_predictor.rollout(
+                    batch[0][: int(cfg.gen_batch)], policy_fn, int(cfg.gen_horizon),
+                )
+        except RuntimeError as e:
+            if "CUDA error" in str(e) or "multinomial" in str(e):
+                print(f"[generate_inloop] skipped at step {global_step}: {e}", flush=True)
+                return
+            raise
         for i in range(len(obss)):
             imag_replay_storage._store_episode({
                 "action": actions[i].detach().cpu().numpy(),

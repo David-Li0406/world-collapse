@@ -6,10 +6,12 @@ num_train_frames: 2000
 num_seed_frames: 200
 eval_every_frames: 500
 num_eval_episodes: 2
-start_mbpo: 200
-# Production uses 1000 WM init steps. Even with smoke budget, fewer than ~100
-# produces NaN logits at first generation (torch.multinomial CUDA assert).
-init_update_gen_steps: 200
+start_mbpo: 500
+# Production uses 1000 WM init steps. BF16 autocast generation can produce
+# NaN softmax even after some training; we bump init to 500 + guard the
+# generate call. start_mbpo also bumped to 500 to delay first rollout until
+# WM has converged enough that rollouts mostly succeed.
+init_update_gen_steps: 500
 init_gen_times: 2
 gen_every_steps: 50
 update_gen_every_step: 5
