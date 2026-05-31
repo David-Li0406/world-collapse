@@ -239,9 +239,13 @@ def run(
     })
     agent = _make_agent(train_env.observation_spec(), train_env.action_spec(), agent_cfg)
     video_predictor = VideoPredictor(device, cfg.world_model)
-    # iVideoGPT instantiates torch.cuda.amp.GradScaler() but trains under
-    # bfloat16 autocast — newer torch rejects unscale on BF16 grads. Replace
-    # both scalers with no-op equivalents (correct behavior for BF16).
+    # Force FP32 for model + tokenizer. BF16 attention SIGFPEs (exit 136)
+    # during generate() on this hardware/torch combo, regardless of training
+    # amount. FP32 is ~2x slower but numerically stable.
+    video_predictor.model.float()
+    video_predictor.tokenizer.float()
+    # GradScaler is for FP16, irrelevant in FP32 (and previous BF16 autocast
+    # wouldn't unscale anyway). Replace with no-op.
     class _NoOpScaler:
         def scale(self, loss): return loss
         def unscale_(self, optimizer): pass
@@ -263,10 +267,9 @@ def run(
     _SAFE_LOGITS = _LPL([_SanitizeLogits()])
 
     def _patched_rollout(self, obs, policy, horizon):
-        # Keep bf16 autocast to match training-time dtype (loaded weights are
-        # bf16). The logits sanitizer below replaces any inf/nan scores with
-        # -1e4 before softmax → no NaN probs → no torch.multinomial CUDA assert.
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        # Model + tokenizer were cast to FP32 above; no autocast.
+        # Logits sanitizer is belt + suspenders.
+        with _ctx.nullcontext():
             B = obs.shape[0]
             args = self.args
             obs = obs.to(self.device) / 255.
