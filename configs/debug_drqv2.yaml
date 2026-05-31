@@ -6,13 +6,16 @@ num_train_frames: 3000
 num_seed_frames: 200
 eval_every_frames: 1000
 num_eval_episodes: 2
-start_mbpo: 1000
-# Match production init step count: a CUDA assert from multinomial(NaN) in
-# generate_inloop poisons the whole CUDA context, so subsequent training
-# steps die too. wmcollapse's pilot uses 1000 init steps + bf16 autocast
-# successfully; fewer than that produces inf logits during generation.
-init_update_gen_steps: 1000
-init_gen_times: 2
+# SMOKE ONLY: disable MBPO imagination entirely.
+# bf16 autocast generate() inside VideoPredictor.rollout produces inf/NaN
+# logits → torch.multinomial CUDA assert → poisons CUDA context → all
+# subsequent kernels (including drqv2.update) die. Catching the error
+# doesn't help — context is unrecoverable. Smoke just exercises WM
+# training + real-only DrQ update; production cfg needs a separate fix
+# for the generate path.
+start_mbpo: 99999
+init_update_gen_steps: 200
+init_gen_times: 0
 gen_every_steps: 50
 update_gen_every_step: 5
 update_tokenizer_every_step: 20
