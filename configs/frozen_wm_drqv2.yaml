@@ -3,7 +3,7 @@
 #   - WM NOT updated; policy still trains via MBPO on frozen WM rollouts.
 # Isolates policy-only effects from WM-update-driven drift.
 
-num_train_frames: 20000
-eval_every_frames: 2000
+num_train_frames: 100000
+eval_every_frames: 10000
 bias_goal: true
 bias_fraction: 0.5

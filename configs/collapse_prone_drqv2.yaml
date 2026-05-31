@@ -3,8 +3,10 @@
 #   - WM trained ONLY on recency-windowed online buffer (no D_real_R0 replay)
 # Hypothesis: WM forgets the held-out subregion; policy SR drops there.
 
-num_train_frames: 20000
-eval_every_frames: 2000
+# Bumped 20k → 100k to give the policy time to learn after starting from
+# the (still-undertrained) round-0 checkpoint. Wall ~8-9h per job at FP32.
+num_train_frames: 100000
+eval_every_frames: 10000
 bias_goal: true
 bias_fraction: 0.5
 recent_window: 5000

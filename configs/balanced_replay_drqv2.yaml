@@ -3,7 +3,7 @@
 #   - WM trained on 50/50 mix of D_real_R0 + online buffer
 # Tests whether broad replay preserves WM coverage despite biased collection.
 
-num_train_frames: 20000
-eval_every_frames: 2000
+num_train_frames: 100000
+eval_every_frames: 10000
 bias_goal: true
 bias_fraction: 0.5

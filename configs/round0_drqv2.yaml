@@ -1,6 +1,9 @@
 # Round-0 overlay: standard MBPO on the full push-v3 distribution.
 # Produces (WM_0, Policy_0, D_real_R0) shared by every Phase B condition.
 
-num_train_frames: 50000
-eval_every_frames: 10000
+# Bumped 50k → 200k to give DrQ-v2 a fighting chance on push-v3 before
+# Phase B starts. Wall ~6h at FP32 (was ~1.5h at 50k). Eval cadence
+# proportional so probe-eval overhead stays similar.
+num_train_frames: 200000
+eval_every_frames: 20000
 bias_goal: false
