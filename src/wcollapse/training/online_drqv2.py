@@ -332,8 +332,14 @@ def run(
 
     def get_policy_batch(global_step: int):
         real_b = get_next("real_pol")
-        if global_step * action_repeat >= int(cfg.start_mbpo):
-            fake_b = get_next("imag_pol")
+        use_imag = global_step * action_repeat >= int(cfg.start_mbpo)
+        if use_imag:
+            # imag buffer may be empty (e.g., NaN-skipped rollouts in early
+            # training); fall back to real samples to keep policy training alive.
+            try:
+                fake_b = get_next("imag_pol")
+            except (IndexError, RuntimeError):
+                fake_b = get_next("real_pol")
         else:
             fake_b = get_next("real_pol")
         return [torch.cat([r, f], 0) for r, f in zip(real_b, fake_b)]
