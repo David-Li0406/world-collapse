@@ -23,3 +23,6 @@ batch_size: 32
 world_model:
   batch_size: 4
 recent_window: 1000
+# Smoke skips probe-eval to avoid VideoPredictor.rollout's NaN-multinomial
+# CUDA assert (same generate path issue that forced start_mbpo=99999).
+skip_probe_eval: true

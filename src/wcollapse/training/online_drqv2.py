@@ -382,7 +382,7 @@ def run(
         metrics["avg_reward"] = float(avg_r)
         metrics["success_rate"] = float(sr)
 
-        if mode == "online" and probe_bank is not None:
+        if mode == "online" and probe_bank is not None and not bool(cfg.get("skip_probe_eval", False)):
             cov = coverage_metrics(
                 pretrain_buffer_dir=round0_dir / "buffer",
                 active_buffer_dir=round_buffer_dir,
@@ -445,7 +445,7 @@ def run(
             time_step = train_env.reset()
             _record(replay_storage, time_step)
 
-        if eval_every(global_step) and (mode != "round0" or global_step > 0):
+        if eval_every(global_step) and global_step > 0:
             m = do_eval(global_step)
             m["frame"] = global_step * action_repeat
             m["step"] = global_step
