@@ -6,16 +6,12 @@ num_train_frames: 3000
 num_seed_frames: 200
 eval_every_frames: 1000
 num_eval_episodes: 2
-# SMOKE ONLY: disable MBPO imagination entirely.
-# bf16 autocast generate() inside VideoPredictor.rollout produces inf/NaN
-# logits → torch.multinomial CUDA assert → poisons CUDA context → all
-# subsequent kernels (including drqv2.update) die. Catching the error
-# doesn't help — context is unrecoverable. Smoke just exercises WM
-# training + real-only DrQ update; production cfg needs a separate fix
-# for the generate path.
-start_mbpo: 99999
-init_update_gen_steps: 200
-init_gen_times: 0
+# MBPO + probe-eval RE-ENABLED: VideoPredictor.rollout is now monkey-patched
+# in online_drqv2.py to use FP32 + logits sanitization, so the bf16
+# multinomial(NaN) CUDA assert is no longer a concern.
+start_mbpo: 400
+init_update_gen_steps: 400
+init_gen_times: 2
 gen_every_steps: 50
 update_gen_every_step: 5
 update_tokenizer_every_step: 20
@@ -23,6 +19,4 @@ batch_size: 32
 world_model:
   batch_size: 4
 recent_window: 1000
-# Smoke skips probe-eval to avoid VideoPredictor.rollout's NaN-multinomial
-# CUDA assert (same generate path issue that forced start_mbpo=99999).
-skip_probe_eval: true
+skip_probe_eval: false

@@ -250,6 +250,83 @@ def run(
     video_predictor.tok_scaler = _NoOpScaler()
     video_predictor.model_scaler = _NoOpScaler()
 
+    # Patch rollout to use FP32 + a logits processor that sanitizes inf/nan.
+    # Upstream wraps the LLM generate() in bf16 autocast, which can produce
+    # inf/NaN logits → torch.multinomial CUDA assert → poisons CUDA context.
+    # FP32 is slower but stable; sanitizer is belt + suspenders.
+    import contextlib as _ctx
+    from transformers import LogitsProcessor as _LP, LogitsProcessorList as _LPL
+    from video_predictor import symexp as _symexp
+    class _SanitizeLogits(_LP):
+        def __call__(self, input_ids, scores):
+            return torch.where(torch.isfinite(scores), scores, torch.full_like(scores, -1e4))
+    _SAFE_LOGITS = _LPL([_SanitizeLogits()])
+
+    def _patched_rollout(self, obs, policy, horizon):
+        with _ctx.nullcontext():  # explicit no autocast → FP32
+            B = obs.shape[0]
+            args = self.args
+            obs = obs.to(self.device) / 255.
+            init_obs = obs
+            current_frames = list(torch.chunk(obs, 3, dim=1))
+            tokens_per_ctx = 256
+            tokens_per_dyn = 16
+            context_frames = torch.stack(current_frames[-args.context_length:], dim=1)
+            tokens, _ = self.tokenizer.tokenize(
+                torch.cat((context_frames, torch.zeros_like(context_frames)), dim=1),
+                args.context_length,
+            )
+            tokens = tokens[:, :args.context_length * (tokens_per_ctx + 1)]
+            init_tokens = tokens
+            embeds = self.model.get_input_embeddings(tokens)
+            cache = None
+            obss, actions, rewards = [], [], []
+            obs = init_obs
+            for t in range(horizon):
+                action = policy(obs, t)
+                action_embeds = self.model.action_linear(action)
+                embeds[:, -1] += action_embeds
+                result = self.model.llm.generate(
+                    inputs_embeds=embeds,
+                    do_sample=True, temperature=1.0,
+                    pad_token_id=50256, top_k=100,
+                    use_cache=True,
+                    max_new_tokens=tokens_per_dyn + 1,
+                    return_dict_in_generate=True,
+                    output_hidden_states=True,
+                    logits_processor=_SAFE_LOGITS,
+                )
+                predicted_token = result.sequences[:, :-1]
+                last_layer_hidden_states = result.hidden_states[-1]
+                last_token_states = last_layer_hidden_states[-1]
+                reward = self.model.reward_linear(last_token_states).squeeze(-2)
+                cat_predicted_token = (torch.concat(
+                    [predicted_token,
+                     (torch.ones(B) * self.model.token_for_sdf).unsqueeze(1).to(self.device)],
+                    dim=1).to(predicted_token.dtype))
+                embeds = torch.concat(
+                    [embeds, self.model.get_input_embeddings(cat_predicted_token)], dim=1)
+                fmap, cache = self.tokenizer.detokenize(
+                    torch.concat([init_tokens, predicted_token], dim=1),
+                    args.context_length, cache=cache, return_cache=True,
+                )
+                fmap = fmap.clamp(0.0, 1.0)
+                current_frames.append(fmap[:, -1])
+                current_frames.pop(0)
+                obs = torch.cat(current_frames, dim=1)
+                obss.append(obs)
+                actions.append(action)
+                rewards.append(reward)
+        obss = [init_obs] + obss
+        actions = [torch.zeros_like(actions[0])] + actions
+        rewards = [torch.zeros_like(rewards[0])] + rewards
+        if self.args.symlog:
+            rewards = [_symexp(r) for r in rewards]
+        return (torch.stack(obss, 1).float(),
+                torch.stack(actions, 1).float(),
+                torch.stack(rewards, 1).float())
+    video_predictor.rollout = _patched_rollout.__get__(video_predictor, VideoPredictor)
+
     # Load round-0 checkpoint for Phase B; also load M_0 baseline (separate instance).
     wm_baseline = None
     if mode == "online":
