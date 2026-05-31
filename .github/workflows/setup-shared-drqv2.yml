@@ -66,24 +66,25 @@ jobs:
 
       - name: Probe render backends
         run: |
-          echo "--- EGL ICD configs (canonical) ---"
+          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
+          echo "--- NVIDIA prefix: ${NVIDIA_PREFIX:-MISSING} ---"
+          ls -la "${NVIDIA_PREFIX}/lib64/" 2>&1 | grep -iE "egl|gl\." | head -20
+          echo "--- libEGL anywhere (looking for glvnd dispatch lib) ---"
+          (find /usr /opt /etc /lib -maxdepth 6 -name "libEGL.so*" 2>/dev/null || true) | head -20
+          echo "--- libGLdispatch (glvnd marker) ---"
+          (find /usr /opt /etc /lib -maxdepth 6 -name "libGLdispatch*" 2>/dev/null || true) | head -10
+          echo "--- All EGL ICD configs ---"
           ls -la /usr/share/glvnd/egl_vendor.d/ /etc/glvnd/egl_vendor.d/ 2>&1 || echo "no glvnd dirs"
-          echo "--- libEGL_nvidia anywhere ---"
-          (find /usr /opt /etc /lib /home -maxdepth 6 -name "libEGL_nvidia*" 2>/dev/null || true) | head -20
-          echo "--- 10_nvidia.json anywhere ---"
-          (find /usr /opt /etc /home -maxdepth 6 -name "10_nvidia.json" 2>/dev/null || true) | head -10
+          cat "${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json" 2>&1 || echo "(no nvidia ICD json)"
           echo "--- libOSMesa anywhere ---"
           (find /usr /opt /etc /lib -maxdepth 6 -name "libOSMesa*" 2>/dev/null || true) | head -10
-          echo "--- NVIDIA driver utilities + nvidia-smi GL info ---"
-          which nvidia-smi nvidia-modprobe nvidia-xconfig 2>&1 || true
-          nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>&1 | head -1
           echo "--- ldconfig EGL entries ---"
           ldconfig -p 2>/dev/null | grep -iE "egl|osmesa|glvnd" | head -20
-          echo "--- DRI cards + render nodes ---"
+          echo "--- DRI render nodes + groups ---"
           ls -la /dev/dri/ 2>&1 || echo "no /dev/dri"
-          echo "--- Runner user groups ---"
-          id
-          getent group video render 2>&1 || true
+          id; getent group video render 2>&1 || true
+          echo "--- nvidia-smi driver ---"
+          nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>&1 | head -1
 
       - name: Build probe bank
         shell: bash -eo pipefail {0}
@@ -103,6 +104,14 @@ jobs:
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
             export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
             export __GLX_VENDOR_LIBRARY_NAME=nvidia
+            # Prefer NVIDIA's own libEGL.so if shipped; otherwise dlopen the ICD
+            # lib directly (PLATFORM_DEVICE bypasses glvnd dispatch).
+            if [ -e "${NVIDIA_PREFIX}/lib64/libEGL.so.1" ]; then
+              export MUJOCO_EGL_LIBRARY="${NVIDIA_PREFIX}/lib64/libEGL.so.1"
+            elif [ -e "${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0" ]; then
+              export MUJOCO_EGL_LIBRARY="${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0"
+            fi
+            echo "MUJOCO_EGL_LIBRARY=${MUJOCO_EGL_LIBRARY:-(default libEGL.so.1)}"
             echo "Using NVIDIA EGL from $NVIDIA_PREFIX"
           else
             echo "WARN: no /opt/nvidia-* found"
