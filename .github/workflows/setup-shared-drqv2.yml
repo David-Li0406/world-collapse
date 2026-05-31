@@ -93,26 +93,32 @@ jobs:
           which eglinfo 2>&1 || echo "no eglinfo"
           NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
           if [ -n "$NVIDIA_PREFIX" ]; then
+            echo "--- NVIDIA lib64 full listing (find deps) ---"
+            ls -la "${NVIDIA_PREFIX}/lib64/" 2>&1 | head -50
+            echo "--- ldd libEGL_nvidia.so.0 (need ALL deps resolved) ---"
+            ldd "${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0" 2>&1 | head -30
+            echo "--- ldd libEGL_nvidia.so.0 with LD_LIBRARY_PATH ---"
+            LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}" ldd "${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0" 2>&1 | head -30
             echo "--- minimal EGL device-init probe via NVIDIA ICD (with glvnd debug) ---"
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
             export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
             export __EGL_VENDOR_LIBRARY_DIRS="${NVIDIA_PREFIX}/egl_vendor.d"
             export EGL_LOG_LEVEL=debug
             export LIBGL_DEBUG=verbose
-            uv run python - <<'PY' || true
-          import os, ctypes, ctypes.util
+            uv run python - <<'PY' 2>&1 || true
+          import os, ctypes
           for k in ("LD_LIBRARY_PATH", "__EGL_VENDOR_LIBRARY_FILENAMES", "__EGL_VENDOR_LIBRARY_DIRS"):
               print(f"{k}=", os.environ.get(k))
+          # Pre-load NVIDIA ICD directly to surface any dep-resolution error.
+          try:
+              nv = ctypes.cdll.LoadLibrary("/opt/nvidia-535.274.02/lib64/libEGL_nvidia.so.0")
+              print("libEGL_nvidia.so.0 direct dlopen OK:", nv)
+          except OSError as e:
+              print("libEGL_nvidia.so.0 direct dlopen FAIL:", e)
           egl = ctypes.cdll.LoadLibrary("libEGL.so.1")
           egl.eglQueryString.restype = ctypes.c_char_p
           print("EGL_VERSION (no display):", egl.eglQueryString(0, 0x3054))
           print("EGL_EXTENSIONS (client) :", egl.eglQueryString(0, 0x3055))
-          # Try direct device-mode query
-          egl.eglGetProcAddress.restype = ctypes.c_void_p
-          fn = egl.eglGetProcAddress(b"eglQueryDevicesEXT")
-          print("eglQueryDevicesEXT addr:", fn)
-          fn = egl.eglGetProcAddress(b"eglGetPlatformDisplayEXT")
-          print("eglGetPlatformDisplayEXT addr:", fn)
           PY
           fi
 
