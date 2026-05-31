@@ -9,8 +9,10 @@ num_eval_episodes: 2
 # MBPO + probe-eval RE-ENABLED: VideoPredictor.rollout is now monkey-patched
 # in online_drqv2.py to use FP32 + logits sanitization, so the bf16
 # multinomial(NaN) CUDA assert is no longer a concern.
-start_mbpo: 400
-init_update_gen_steps: 400
+start_mbpo: 1000
+# Match wmcollapse pilot's 1000 init steps — empirically the floor that
+# keeps BF16 generation numerically stable (smoke at 400 init segfaulted).
+init_update_gen_steps: 1000
 init_gen_times: 2
 gen_every_steps: 50
 update_gen_every_step: 5
