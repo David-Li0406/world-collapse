@@ -342,6 +342,11 @@ def run(
         print(f"[online] loaded WM + DrQ-v2 from {round0_dir}", flush=True)
         wm_baseline = VideoPredictor(device, cfg.world_model)
         wm_baseline.load_snapshot(str(round0_dir))
+        # Apply the same FP32 + scaler/rollout patches as video_predictor so
+        # probe_eval's forgetting-score rollout doesn't hit bf16 SIGFPE.
+        wm_baseline.model.float()
+        wm_baseline.tokenizer.float()
+        wm_baseline.rollout = _patched_rollout.__get__(wm_baseline, VideoPredictor)
         torch.nn.Module.train(wm_baseline, False)
 
     # ---- replay storages (this run) ----
