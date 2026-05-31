@@ -263,7 +263,10 @@ def run(
     _SAFE_LOGITS = _LPL([_SanitizeLogits()])
 
     def _patched_rollout(self, obs, policy, horizon):
-        with _ctx.nullcontext():  # explicit no autocast → FP32
+        # Keep bf16 autocast to match training-time dtype (loaded weights are
+        # bf16). The logits sanitizer below replaces any inf/nan scores with
+        # -1e4 before softmax → no NaN probs → no torch.multinomial CUDA assert.
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             B = obs.shape[0]
             args = self.args
             obs = obs.to(self.device) / 255.
