@@ -2,16 +2,16 @@
 # Use with --mode round0 (no condition) or --mode online --condition X.
 
 seed: 42
-num_train_frames: 2000
+num_train_frames: 3000
 num_seed_frames: 200
-eval_every_frames: 500
+eval_every_frames: 1000
 num_eval_episodes: 2
-start_mbpo: 500
-# Production uses 1000 WM init steps. BF16 autocast generation can produce
-# NaN softmax even after some training; we bump init to 500 + guard the
-# generate call. start_mbpo also bumped to 500 to delay first rollout until
-# WM has converged enough that rollouts mostly succeed.
-init_update_gen_steps: 500
+start_mbpo: 1000
+# Match production init step count: a CUDA assert from multinomial(NaN) in
+# generate_inloop poisons the whole CUDA context, so subsequent training
+# steps die too. wmcollapse's pilot uses 1000 init steps + bf16 autocast
+# successfully; fewer than that produces inf logits during generation.
+init_update_gen_steps: 1000
 init_gen_times: 2
 gen_every_steps: 50
 update_gen_every_step: 5
