@@ -99,26 +99,36 @@ jobs:
             ldd "${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0" 2>&1 | head -30
             echo "--- ldd libEGL_nvidia.so.0 with LD_LIBRARY_PATH ---"
             LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}" ldd "${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0" 2>&1 | head -30
-            echo "--- minimal EGL device-init probe via NVIDIA ICD (with glvnd debug) ---"
-            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
+            echo "--- EGL device enumeration via NVIDIA ICD ---"
+            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
             export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
-            export __EGL_VENDOR_LIBRARY_DIRS="${NVIDIA_PREFIX}/egl_vendor.d"
-            export EGL_LOG_LEVEL=debug
-            export LIBGL_DEBUG=verbose
+            unset __EGL_VENDOR_LIBRARY_DIRS
             uv run python - <<'PY' 2>&1 || true
           import os, ctypes
-          for k in ("LD_LIBRARY_PATH", "__EGL_VENDOR_LIBRARY_FILENAMES", "__EGL_VENDOR_LIBRARY_DIRS"):
-              print(f"{k}=", os.environ.get(k))
-          # Pre-load NVIDIA ICD directly to surface any dep-resolution error.
-          try:
-              nv = ctypes.cdll.LoadLibrary("/opt/nvidia-535.274.02/lib64/libEGL_nvidia.so.0")
-              print("libEGL_nvidia.so.0 direct dlopen OK:", nv)
-          except OSError as e:
-              print("libEGL_nvidia.so.0 direct dlopen FAIL:", e)
+          print("__EGL_VENDOR_LIBRARY_FILENAMES=", os.environ.get("__EGL_VENDOR_LIBRARY_FILENAMES"))
+          ctypes.cdll.LoadLibrary("/opt/nvidia-535.274.02/lib64/libEGL_nvidia.so.0")
           egl = ctypes.cdll.LoadLibrary("libEGL.so.1")
           egl.eglQueryString.restype = ctypes.c_char_p
-          print("EGL_VERSION (no display):", egl.eglQueryString(0, 0x3054))
-          print("EGL_EXTENSIONS (client) :", egl.eglQueryString(0, 0x3055))
+          ext = egl.eglQueryString(0, 0x3055).decode()
+          print("EGL_EXTENSIONS (client):", ext)
+          egl.eglGetProcAddress.restype = ctypes.c_void_p
+          QueryDevices = ctypes.CFUNCTYPE(
+              ctypes.c_uint, ctypes.c_int,
+              ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_int),
+          )(egl.eglGetProcAddress(b"eglQueryDevicesEXT"))
+          maxn = 16
+          devs = (ctypes.c_void_p * maxn)()
+          n = ctypes.c_int(0)
+          ok = QueryDevices(maxn, devs, ctypes.byref(n))
+          print(f"eglQueryDevicesEXT ok={ok} n_devices={n.value}")
+          QDS = ctypes.CFUNCTYPE(ctypes.c_char_p, ctypes.c_void_p, ctypes.c_int)(
+              egl.eglGetProcAddress(b"eglQueryDeviceStringEXT"))
+          GPD = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p)(
+              egl.eglGetProcAddress(b"eglGetPlatformDisplayEXT"))
+          for i in range(n.value):
+              vendor = QDS(devs[i], 0x3055)
+              disp = GPD(0x313F, devs[i], None)
+              print(f"  device[{i}] ext={vendor!r}  display={disp} (0=NO_DISPLAY)")
           PY
           fi
 
@@ -129,11 +139,11 @@ jobs:
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
           export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
           export MUJOCO_GL=egl
-          # CUDA_VISIBLE_DEVICES already restricts visibility to one GPU; EGL
-          # enumerates that GPU at index 0 inside the process. Setting
-          # EGL_DEVICE_ID to the global GPU index is out-of-range.
-          export EGL_DEVICE_ID=0
-          unset PYOPENGL_PLATFORM
+          # mujoco 3.x reads MUJOCO_EGL_DEVICE_ID (not EGL_DEVICE_ID).
+          # With CUDA_VISIBLE_DEVICES restricting visibility, the visible GPU is
+          # at index 0 inside the process.
+          export MUJOCO_EGL_DEVICE_ID=0
+          unset EGL_DEVICE_ID PYOPENGL_PLATFORM
           # NVIDIA EGL ICD lives under /opt/nvidia-* on this runner; put its lib
           # dir on LD_LIBRARY_PATH and point glvnd at the right ICD JSON so
           # mujoco's EGL device-mode resolves NVIDIA's libEGL_nvidia (rather
@@ -141,9 +151,14 @@ jobs:
           NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
           if [ -n "$NVIDIA_PREFIX" ]; then
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
+            # FILENAMES alone restricts glvnd to NVIDIA's ICD ONLY (avoids Mesa
+            # also being enumerated, which would otherwise make eglQueryDevicesEXT
+            # return both NVIDIA + Mesa software devices and mujoco might pick the
+            # wrong one). Explicitly DO NOT set __EGL_VENDOR_LIBRARY_DIRS — it would
+            # cause glvnd to fall back to scanning a dir.
             export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
-            export __EGL_VENDOR_LIBRARY_DIRS="${NVIDIA_PREFIX}/egl_vendor.d"
-            echo "Using NVIDIA EGL from $NVIDIA_PREFIX"
+            unset __EGL_VENDOR_LIBRARY_DIRS
+            echo "Using NVIDIA EGL from $NVIDIA_PREFIX (filenames-only)"
           fi
           # (Skipping inline render diagnostic — build_probe_bank.py does its
           # own NVIDIA EGL preload before mujoco import. If it fails, the
@@ -177,11 +192,11 @@ jobs:
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
           export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
           export MUJOCO_GL=egl
-          # CUDA_VISIBLE_DEVICES already restricts visibility to one GPU; EGL
-          # enumerates that GPU at index 0 inside the process. Setting
-          # EGL_DEVICE_ID to the global GPU index is out-of-range.
-          export EGL_DEVICE_ID=0
-          unset PYOPENGL_PLATFORM
+          # mujoco 3.x reads MUJOCO_EGL_DEVICE_ID (not EGL_DEVICE_ID).
+          # With CUDA_VISIBLE_DEVICES restricting visibility, the visible GPU is
+          # at index 0 inside the process.
+          export MUJOCO_EGL_DEVICE_ID=0
+          unset EGL_DEVICE_ID PYOPENGL_PLATFORM
           NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
           if [ -n "$NVIDIA_PREFIX" ]; then
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"

@@ -21,9 +21,9 @@ from __future__ import annotations
 # Env vars must be set BEFORE torch/mujoco imports.
 import os
 os.environ.setdefault("MUJOCO_GL", "egl")
-# When CUDA_VISIBLE_DEVICES restricts visibility, NVIDIA EGL enumerates the
-# visible GPU at index 0 — using the global GPU index would be out of range.
-os.environ.setdefault("EGL_DEVICE_ID", "0")
+# mujoco 3.x reads MUJOCO_EGL_DEVICE_ID, not EGL_DEVICE_ID. With
+# CUDA_VISIBLE_DEVICES restricting visibility, the visible GPU is at index 0.
+os.environ.setdefault("MUJOCO_EGL_DEVICE_ID", "0")
 os.environ["MKL_SERVICE_FORCE_INTEL"] = "1"
 
 # Pre-load NVIDIA EGL ICD so glvnd dispatches to it (in-process registry).

@@ -76,8 +76,8 @@ jobs:
           if [ -n "$NVIDIA_PREFIX" ]; then
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
             export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
-            export __EGL_VENDOR_LIBRARY_DIRS="${NVIDIA_PREFIX}/egl_vendor.d"
-            echo "Using NVIDIA EGL from $NVIDIA_PREFIX"
+            unset __EGL_VENDOR_LIBRARY_DIRS
+            echo "Using NVIDIA EGL from $NVIDIA_PREFIX (filenames-only)"
           fi
           export PYTHONUNBUFFERED=1
           export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
@@ -118,7 +118,7 @@ jobs:
               fi
 
               echo "[fanout] launching ${cond} seed=${seed} on GPU ${GPU} -> ${OUT}"
-              CUDA_VISIBLE_DEVICES="${GPU}" EGL_DEVICE_ID=0 uv run python -u -m wcollapse.training.online_drqv2 \
+              CUDA_VISIBLE_DEVICES="${GPU}" MUJOCO_EGL_DEVICE_ID=0 uv run python -u -m wcollapse.training.online_drqv2 \
                 --mode online \
                 --condition "${cond}" \
                 --config "${TMP_CFG}" \
