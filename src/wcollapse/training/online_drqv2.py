@@ -26,6 +26,17 @@ if "CUDA_VISIBLE_DEVICES" in os.environ:
     os.environ.setdefault("EGL_DEVICE_ID", os.environ["CUDA_VISIBLE_DEVICES"].split(",")[0])
 os.environ["MKL_SERVICE_FORCE_INTEL"] = "1"
 
+# Pre-load NVIDIA EGL ICD so glvnd dispatches to it (in-process registry).
+import ctypes as _ctypes
+import glob as _glob
+for _libpath in sorted(_glob.glob("/opt/nvidia-*/lib64/libEGL_nvidia.so.0")):
+    try:
+        _ctypes.cdll.LoadLibrary(_libpath)
+        print(f"[boot] preloaded NVIDIA EGL ICD: {_libpath}", flush=True)
+        break
+    except OSError as _exc:
+        print(f"[boot] WARN preload {_libpath} failed: {_exc}", flush=True)
+
 import argparse
 import json
 import sys

@@ -18,6 +18,19 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 if "CUDA_VISIBLE_DEVICES" in os.environ:
     os.environ.setdefault("EGL_DEVICE_ID", os.environ["CUDA_VISIBLE_DEVICES"].split(",")[0])
 
+# Pre-load NVIDIA EGL ICD so glvnd dispatches to it (cdll.LoadLibrary primes
+# the in-process ICD registry; otherwise glvnd silently falls back to Mesa
+# which can't open /dev/dri on this runner).
+import ctypes as _ctypes
+import glob as _glob
+for _libpath in sorted(_glob.glob("/opt/nvidia-*/lib64/libEGL_nvidia.so.0")):
+    try:
+        _ctypes.cdll.LoadLibrary(_libpath)
+        print(f"[boot] preloaded NVIDIA EGL ICD: {_libpath}", flush=True)
+        break
+    except OSError as _exc:
+        print(f"[boot] WARN preload {_libpath} failed: {_exc}", flush=True)
+
 import numpy as np
 
 from wcollapse.data.probe_bank import build_probe_bank, save_probe_bank
