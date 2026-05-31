@@ -239,6 +239,16 @@ def run(
     })
     agent = _make_agent(train_env.observation_spec(), train_env.action_spec(), agent_cfg)
     video_predictor = VideoPredictor(device, cfg.world_model)
+    # iVideoGPT instantiates torch.cuda.amp.GradScaler() but trains under
+    # bfloat16 autocast — newer torch rejects unscale on BF16 grads. Replace
+    # both scalers with no-op equivalents (correct behavior for BF16).
+    class _NoOpScaler:
+        def scale(self, loss): return loss
+        def unscale_(self, optimizer): pass
+        def step(self, optimizer): optimizer.step()
+        def update(self): pass
+    video_predictor.tok_scaler = _NoOpScaler()
+    video_predictor.model_scaler = _NoOpScaler()
 
     # Load round-0 checkpoint for Phase B; also load M_0 baseline (separate instance).
     wm_baseline = None
