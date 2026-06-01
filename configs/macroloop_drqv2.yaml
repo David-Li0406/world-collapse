@@ -23,6 +23,12 @@
 #     wait for trajectories, retrain" cadence.
 
 gen_every_steps: 10000
-# Initial imag rollout count — keep at 20 so the buffer is populated before
-# the first macro-loop's policy updates start eating it.
-init_gen_times: 20
+# Bump imag-buffer size to compensate for fewer refreshes:
+#   K=260 baseline: 280 rollout calls × 32 ep = ~9 000 episodes total
+#   K=5 + this:     105 rollout calls × 64 ep = ~6 720 episodes total
+# Keeps the K=5 macro-loop count (still 5 imag-refresh events) but each call
+# generates 64 episodes instead of 32, and the initial burst is 100 not 20.
+# Without this, the policy got ~125 updates per imag transition → severe
+# overfitting → SR=0 even on frozen_wm.
+init_gen_times: 100
+gen_batch: 64
