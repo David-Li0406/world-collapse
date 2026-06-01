@@ -369,8 +369,13 @@ def run(
         int(cfg.replay_buffer_num_workers), bool(cfg.save_snapshot),
         int(cfg.nstep), float(cfg.discount),
     )
+    # Optional small cap on the imag buffer so each generate_inloop call's
+    # output ~replaces the buffer via FIFO eviction. Used by the macro-loop
+    # framing where we want each refresh to deliver a fresh imag pool from
+    # the current policy (Option B in the macro-loop write-up).
+    imag_max = int(cfg.get("imag_buffer_size", cfg.replay_buffer_size))
     imag_replay_loader = make_replay_loader(
-        imag_buffer_dir, int(cfg.replay_buffer_size), imag_batch_size,
+        imag_buffer_dir, imag_max, imag_batch_size,
         int(cfg.replay_buffer_num_workers), False, int(cfg.nstep), float(cfg.discount),
     )
 
