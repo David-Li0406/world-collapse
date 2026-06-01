@@ -1,0 +1,28 @@
+# Macro-loop overlay — explicit K=5 WM↔policy feedback iterations per run.
+#
+# Motivation (world-collapse framing):
+#   The "foundation-model retraining" story is that a WM trains a policy →
+#   policy generates trajectories → those trajectories get reused to retrain
+#   the WM → repeat. In the real world this cycle happens a small number of
+#   times (model release cadence), not 260+. We bump gen_every_steps so the
+#   imag-buffer refresh cycle (the natural feedback bottleneck in MBPO) only
+#   fires ~5 times per 100k-frame Phase B run.
+#
+# What stays the same:
+#   - Total WM gradient updates per run (~5 000)
+#   - Total policy gradient updates per run (~100 000)
+#   - Total env frames (100 000) and real_ratio (0.5)
+# What changes:
+#   - gen_every_steps: 200 → 10 000 (5 refreshes after start_mbpo instead of 240)
+#   - Each "macro-loop" between refreshes now contains:
+#       * ~1 000 WM gradient updates (was 20)
+#       * ~20 000 policy gradient updates (was 400)
+#       * ~10 000 env frames collected (was 200)
+#     so the WM and policy each see *many* more updates between successive
+#     imag refreshes, matching the "release a new model, train policy on it,
+#     wait for trajectories, retrain" cadence.
+
+gen_every_steps: 10000
+# Initial imag rollout count — keep at 20 so the buffer is populated before
+# the first macro-loop's policy updates start eating it.
+init_gen_times: 20

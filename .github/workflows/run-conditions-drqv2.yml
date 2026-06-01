@@ -27,6 +27,14 @@ on:
         description: "If true, use debug overlay"
         required: false
         default: "false"
+      extra_overlay:
+        description: "Optional extra config overlay (e.g. macroloop). Empty = no extra overlay."
+        required: false
+        default: ""
+      num_eval_episodes:
+        description: "Override num_eval_episodes (e.g. 50). Empty = config default (10)."
+        required: false
+        default: ""
 
 jobs:
   run:
@@ -90,8 +98,8 @@ jobs:
           IFS=',' read -ra CONDS <<< "${{ inputs.conditions }}"
           IFS=',' read -ra SEEDS <<< "${{ inputs.seeds }}"
 
-          # GPU round-robin over the 4 reserved cards (per project CLAUDE.md).
-          GPUS=(4 5 6 7)
+          # GPU round-robin (CLAUDE.md: GPUs 0-7 available on Machine B).
+          GPUS=(0 1 2 3 4 5 6 7)
           PIDS=()
           IDX=0
           for cond in "${CONDS[@]}"; do
@@ -102,27 +110,40 @@ jobs:
               mkdir -p "$OUT"
 
               TMP_CFG="$(mktemp -t drqv2_${cond}_s${seed}.XXXXXX.yaml)"
+              EXTRA_OVERLAY="${{ inputs.extra_overlay }}"
+              EXTRA_CFG=""
+              if [ -n "$EXTRA_OVERLAY" ]; then
+                EXTRA_CFG="configs/${EXTRA_OVERLAY}_drqv2.yaml"
+              fi
               if [ "${{ inputs.smoke }}" = "true" ]; then
                 uv run python -c "
           from omegaconf import OmegaConf
-          base = OmegaConf.load('configs/drqv2_base.yaml')
-          o1 = OmegaConf.load('configs/${cond}_drqv2.yaml')
-          o2 = OmegaConf.load('configs/debug_drqv2.yaml')
-          OmegaConf.save(OmegaConf.merge(base, o1, o2), '${TMP_CFG}')"
+          cfgs = [OmegaConf.load('configs/drqv2_base.yaml'),
+                  OmegaConf.load('configs/${cond}_drqv2.yaml'),
+                  OmegaConf.load('configs/debug_drqv2.yaml')]
+          if '${EXTRA_CFG}': cfgs.append(OmegaConf.load('${EXTRA_CFG}'))
+          OmegaConf.save(OmegaConf.merge(*cfgs), '${TMP_CFG}')"
               else
                 uv run python -c "
           from omegaconf import OmegaConf
-          base = OmegaConf.load('configs/drqv2_base.yaml')
-          o1 = OmegaConf.load('configs/${cond}_drqv2.yaml')
-          OmegaConf.save(OmegaConf.merge(base, o1), '${TMP_CFG}')"
+          cfgs = [OmegaConf.load('configs/drqv2_base.yaml'),
+                  OmegaConf.load('configs/${cond}_drqv2.yaml')]
+          if '${EXTRA_CFG}': cfgs.append(OmegaConf.load('${EXTRA_CFG}'))
+          OmegaConf.save(OmegaConf.merge(*cfgs), '${TMP_CFG}')"
               fi
 
-              echo "[fanout] launching ${cond} seed=${seed} on GPU ${GPU} -> ${OUT}"
+              # Optional num_eval_episodes override via CLI dotlist (wins over file overlay).
+              EVAL_OVERRIDE=""
+              if [ -n "${{ inputs.num_eval_episodes }}" ]; then
+                EVAL_OVERRIDE="num_eval_episodes=${{ inputs.num_eval_episodes }}"
+              fi
+
+              echo "[fanout] launching ${cond} seed=${seed} on GPU ${GPU} -> ${OUT} (extra=${EXTRA_OVERLAY:-none}, n_eval=${{ inputs.num_eval_episodes }})"
               CUDA_VISIBLE_DEVICES="${GPU}" MUJOCO_EGL_DEVICE_ID=0 uv run python -u -m wcollapse.training.online_drqv2 \
                 --mode online \
                 --condition "${cond}" \
                 --config "${TMP_CFG}" \
-                --overrides seed=${seed} \
+                --overrides seed=${seed} ${EVAL_OVERRIDE} \
                 --output_dir "${OUT}" \
                 --round0_dir "${ROUND0}" \
                 --probe_bank_path "${PROBE}" \
