@@ -98,8 +98,8 @@ jobs:
           IFS=',' read -ra CONDS <<< "${{ inputs.conditions }}"
           IFS=',' read -ra SEEDS <<< "${{ inputs.seeds }}"
 
-          # GPU round-robin (CLAUDE.md: GPUs 0-7 available on Machine B).
-          GPUS=(0 1 2 3 4 5 6 7)
+          # GPU round-robin (CLAUDE.md: GPUs 0-5 reserved for this project; 6-7 free).
+          GPUS=(0 1 2 3 4 5)
           PIDS=()
           IDX=0
           for cond in "${CONDS[@]}"; do
