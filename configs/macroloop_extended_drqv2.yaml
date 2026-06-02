@@ -1,0 +1,23 @@
+# Iter D: K=5 cycled-buf (the gen_batch=512 setting that gave
+# collapse_prone trained=0.90) + 2× training time.
+#
+# Why doubling frames: K=5 cycled gen_batch=512 gave collapse_prone
+# trnDist=0.042 (≈ success threshold) but balanced_replay and frozen_wm
+# only got to trnDist=0.17-0.20 — close but not there. The diagnosis is
+# they need more policy-gradient steps per macro iter to overcome their
+# broader (less accurate-in-trained-subregion) imag signal. Iter B
+# (real_ratio bump) broke collapse_prone. Iter C (4× pool) diluted the
+# trained-subregion concentration that collapse_prone needs.
+#
+# Iter D keeps the working K=5 cycled-buf knobs identical to the prior
+# winner; only num_train_frames doubles. Each macro iter now spans 40k
+# env steps (was 20k) and ~80k policy grad updates (was 40k). K stays at
+# 5 — refreshes at 40k, 80k, 120k, 160k, 200k.
+
+num_train_frames: 200000
+eval_every_frames: 20000     # still 10 eval points across training
+
+gen_every_steps: 40000       # K=5 imag-refresh events
+gen_batch: 512               # ~5.6k fresh transitions per refresh
+init_gen_times: 2            # prime once; cycled below evicts
+imag_buffer_size: 6000       # ~94% turnover per refresh (cycled)
