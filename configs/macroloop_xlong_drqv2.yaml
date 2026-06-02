@@ -1,0 +1,27 @@
+# Iter F: K=5 cycled-buf + 4× training time (400k frames).
+#
+# Iter E (300k) result (single seed, n_eval=10):
+#   collapse_prone : trained=1.0, holdout=0.0 (noise: was 0.5 @280k)
+#   balanced_replay: trained=0.1, holdout=0.0 (just crossed trained at
+#                    the FINAL eval; trnDist monotonically 0.21 -> 0.12)
+#   frozen_wm      : trained=1.0, holdout=0.3 (both clearly nonzero)
+#
+# Diagnosis: balanced_replay is NOT at a fundamental ceiling — its
+# trnDist descends monotonically and it sits on the same convergence
+# curve as frozen_wm, just ~100k frames behind. By construction half its
+# replay/WM budget maintains the broad D_pre fit across the whole goal
+# space instead of specializing on the trained subregion, so it converges
+# ~2x slower. The clean fix is more training time, not a geometry change
+# (raising bias_fraction would shrink the holdout to an extreme edge and
+# risk zeroing the holdout SR that collapse_prone/frozen_wm already get).
+#
+# Iter F pushes frames to 400k so balanced_replay reaches the same
+# trained+holdout convergence the other two already show. K stays at 5.
+
+num_train_frames: 400000
+eval_every_frames: 20000     # 20 eval points
+
+gen_every_steps: 80000       # K=5 refreshes at 80k,160k,240k,320k,400k
+gen_batch: 512
+init_gen_times: 2
+imag_buffer_size: 6000
