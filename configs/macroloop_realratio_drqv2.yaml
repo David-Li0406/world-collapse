@@ -1,0 +1,27 @@
+# Iter B: K=5 cycled-buf + lifted real_ratio (0.5 → 0.75).
+#
+# Rationale: Iter A's softer-eviction K=10 went the wrong way — every
+# condition collapsed to SR=0 because per-refresh policy-gradient budget
+# halved (40k → 20k updates per macro iter). The K=5 cycled-buf baseline
+# already worked for collapse_prone (trained=0.90, holdout=0.00); the
+# failure mode for balanced_replay and frozen_wm at K=5 was policy
+# non-convergence, not the bias split.
+#
+# Hypothesis: balanced_replay's broad WM and frozen_wm's never-updated WM
+# both produce imag rollouts whose accuracy is mediocre in the trained
+# subregion. Lifting real_ratio so the policy gets 75% accurate real-env
+# transitions (instead of 50%) lets it actually learn the trained
+# subregion despite the noisy imag signal, while preserving the small-K
+# story.
+#
+# Stacks on top of base + condition configs. Inherits K=5 cycled-buf from
+# macroloop_drqv2.yaml's structure but is self-contained so we can mix-
+# and-match overlays cleanly.
+
+gen_every_steps: 10000      # K=5 imag-refresh events post-start_mbpo
+gen_batch: 512              # ~5632 fresh transitions per refresh
+init_gen_times: 2           # prime the cycled buffer once
+imag_buffer_size: 6000      # cycled: ~94% fresh per refresh
+
+# The Iter B knob: lift real-env contribution to policy gradient.
+real_ratio: 0.75
