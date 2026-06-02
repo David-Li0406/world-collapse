@@ -1,0 +1,23 @@
+# Iter C: K=5 cycled-buf with a LARGER per-refresh pool.
+#
+# Iter B (real_ratio=0.75) made things worse: collapse_prone went from
+# trained=0.90 → 0.00 because heavy weighting on the tiny recency window
+# overfit it. So real_ratio is NOT the lever.
+#
+# Re-diagnosis: at K=5 with gen_batch=512 we generate only ~2,560
+# episodes across the whole run (vs ~8,320 at K=260 dense baseline). The
+# imag buffer cycles between just ~545 unique episodes at any time, and
+# the policy does ~18× passes over those same transitions per macro iter
+# — heavy reuse that the WM-specialized collapse_prone tolerates but the
+# broad-WM and frozen-WM conditions do not.
+#
+# Fix: quadruple gen_batch (512 → 2048) so each refresh produces ~2,048
+# unique episodes; bump imag_buffer_size proportionally (6,000 → 24,000)
+# so the cycled buffer still turns over ~94% per refresh. Total imag
+# episodes generated: 5 × 2,048 + 2 init = ~10,240, matching K=260's
+# diversity at K=5 cadence. real_ratio stays at the 0.5 default.
+
+gen_every_steps: 10000      # K=5 imag-refresh events post-start_mbpo
+gen_batch: 2048             # 4× the prior K=5 pool size
+init_gen_times: 2           # prime once; cycled buffer evicts after
+imag_buffer_size: 24000     # holds ~1 refresh worth (~2k episodes)

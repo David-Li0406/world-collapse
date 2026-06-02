@@ -73,6 +73,15 @@ jobs:
           fi
           ls -la "$DEST/tokenizer" "$DEST/transformer" | head -10
 
+      - name: Pre-stage LPIPS vgg.pth (avoid parallel-download race)
+        run: |
+          export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
+          export HF_HOME="$HOME/hf_cache"
+          # Single-process LPIPS init validates/downloads vgg.pth so the
+          # parallel fanout below finds a cached, valid file instead of
+          # racing on the same write path (was crashing balanced_replay).
+          uv run python -c "from ivideogpt.vq_model.lpips import LPIPS; LPIPS()"
+
       - name: Run Phase B fanout
         shell: bash -eo pipefail {0}
         run: |
