@@ -1,0 +1,21 @@
+# Iter A: K=10 macro-loop, cycled imag buffer (medium gen_batch).
+#
+# Rationale: K=5 cycled-buf only got collapse_prone learning (SR=0.90)
+# while balanced_replay and frozen_wm stayed at 0. The hypothesis is that
+# frozen_wm needs more refresh events to extract signal from the broad
+# pretrained WM, and balanced_replay needs continuity across refreshes
+# (not pure replacement) to build coherent policy gradient.
+#
+# Changes vs macroloop_drqv2.yaml (K=5):
+#   gen_every_steps:  10000 → 5000   (K=5 → K=10 refresh events)
+#   gen_batch:        512   → 256    (smaller per-refresh, keeps total imag
+#                                     transitions per loop similar)
+#   imag_buffer_size: 6000  → 8000   (holds ~720 episodes ≈ 2 refreshes
+#                                     worth: each refresh = ~36% buffer
+#                                     turnover instead of 94% replacement)
+#   init_gen_times:   2     → 4      (modest initial pool for K=10)
+
+gen_every_steps: 5000
+gen_batch: 256
+init_gen_times: 4
+imag_buffer_size: 8000
