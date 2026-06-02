@@ -1,0 +1,25 @@
+# Iter E: K=5 cycled-buf + 3× training time (300k frames).
+#
+# Iter D (200k) got frozen_wm to (trainedSR=0.10, holdoutSR=0.20) — first
+# non-zero holdout result ever. collapse_prone's trnDist monotonically
+# decreased 0.21 → 0.16 but didn't cross. balanced_replay stayed flat at
+# trnDist≈0.23-0.26 across all 10 evals — likely needs even more grad
+# budget or hits a fundamental ceiling from the broad-WM mixing.
+#
+# Iter E pushes frames to 300k:
+#   - frozen_wm: extrapolating the 180-200k slope, should rise further.
+#   - collapse_prone: at trnDist≈0.16 slope, may cross success threshold.
+#   - balanced_replay: if still flat at 300k, we have evidence the broad-
+#     replay mixing fundamentally prevents convergence at K=5 with this
+#     setup — that's itself a useful Phase B finding.
+#
+# Keep K=5, gen_batch=512, cycled buf=6000 (the only working baseline).
+# Eval cadence stays at one per 20k frames → 15 evaluation points.
+
+num_train_frames: 300000
+eval_every_frames: 20000     # 15 eval points
+
+gen_every_steps: 60000       # K=5 refreshes at 60k,120k,180k,240k,300k
+gen_batch: 512
+init_gen_times: 2
+imag_buffer_size: 6000
