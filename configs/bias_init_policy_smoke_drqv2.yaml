@@ -1,0 +1,32 @@
+# Smoke for the init-bias settings (~10 min). Exercises the NEW code paths:
+#   - measure_split eval (goal_shift_eval A vs B decoupled from training bias)
+#   - per-episode training-goal controller + warmup→full-space transition
+#   - cov/frac_goal_in_A / frac_obj_in_A metric
+# Stack on base + a condition (e.g. collapse_prone) with smoke=false:
+#   extra_overlay=bias_init_policy_smoke
+# (Can't use smoke=true: the debug overlay merges BEFORE extra_overlay, so the
+#  bias overlay would override its tiny frame budget. This config bakes both in.)
+
+seed: 42
+num_train_frames: 3000
+num_seed_frames: 200
+eval_every_frames: 1000
+num_eval_episodes: 2
+start_mbpo: 1000
+init_update_gen_steps: 1000
+init_gen_times: 2
+gen_every_steps: 1000          # ~2-3 feedback iters within 3000 frames
+update_gen_every_step: 5
+update_tokenizer_every_step: 20
+batch_size: 32
+world_model:
+  batch_size: 4
+recent_window: 1000
+imag_buffer_size: 6000
+skip_probe_eval: false
+
+# init-bias knobs (Setting 1 shape):
+bias_goal: false
+measure_split: true
+measure_bias_fraction: 0.5
+bias_warmup_frames: 1000       # bias to A for first ~1k frames, then full-space
