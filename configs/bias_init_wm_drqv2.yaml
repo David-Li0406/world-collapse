@@ -1,0 +1,30 @@
+# Setting 2 — WM-seeded bias (no permanent split).
+#
+# The seed lives in the WORLD MODEL: M_0 was trained on an A-skewed round-0
+# buffer (see configs/round0_wmbias_drqv2.yaml), so it is more accurate in A
+# than B from the start. Phase B trains on the FULL goal space throughout (no
+# warmup, no split); we watch whether the loop ENLARGES the WM's A-skew into
+# behavioral + coverage collapse.
+#
+# WM-only isolation: mount the biased M_0 (round0 from the A-skewed setup) but
+# pair it with a CLEAN policy from an unbiased round-0. The Phase-B workflow
+# passes --policy_round0_dir pointing at the clean setup's round0.
+#
+# Compose with a WM regime via --condition (collapse_prone = amplifier;
+# frozen_wm = control: with a frozen biased M_0, the seed can't grow via WM
+# forgetting, but the biased imagined rollouts may still skew the policy).
+#
+# Self-contained K=5 / 300k macro-loop.
+
+num_train_frames: 300000
+eval_every_frames: 20000
+
+gen_every_steps: 60000      # K=5 imag refreshes
+gen_batch: 512
+init_gen_times: 2
+imag_buffer_size: 6000      # cycled buffer
+
+bias_goal: false            # full-space training throughout
+measure_split: true         # always measure A vs B
+measure_bias_fraction: 0.5  # MUST match the round-0 collect_bias_fraction
+# no bias_warmup_frames: training is unbiased from the start; the bias is in M_0.

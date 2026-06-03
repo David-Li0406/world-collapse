@@ -168,10 +168,19 @@ def coverage_metrics(
     counts = _count_within_radius(probe_pts, cur_points, radius)
     visited_mask = counts > 0
 
+    # Realized-data skew toward region A (goal-x < split). Shows whether the
+    # policy increasingly *generates* A-skewed data even when goals are
+    # requested full-space — the behavioral driver of init-bias amplification.
+    # cur_points columns = [obj_x, obj_y, goal_x].
+    frac_goal_in_A = float((cur_points[:, 2] < goal_split).mean()) if cur_points.size else 0.0
+    frac_obj_in_A = float((cur_points[:, 0] < goal_split).mean()) if cur_points.size else 0.0
+
     return {
         "scalar": {
             "visitation_entropy": visitation_entropy,
             "support_gap": support_gap,
+            "frac_goal_in_A": frac_goal_in_A,
+            "frac_obj_in_A": frac_obj_in_A,
             "n_ref_points": int(ref_points.shape[0]),
             "n_cur_points": int(cur_points.shape[0]),
             "n_visited_probes": int(visited_mask.sum()),

@@ -35,6 +35,10 @@ on:
         description: "Override num_eval_episodes (e.g. 50). Empty = config default (10)."
         required: false
         default: ""
+      policy_setup_run:
+        description: "Load the POLICY from this setup_run's round0 instead of setup_run (Setting 2: biased WM + clean policy). Empty = same as setup_run."
+        required: false
+        default: ""
 
 jobs:
   run:
@@ -108,6 +112,15 @@ jobs:
           ROUND0="$SHARED/round0"
           PROBE="$SHARED/probe_bank.h5"
 
+          # Setting 2: load the policy from a DIFFERENT (clean) setup than the WM.
+          POLICY_ARG=""
+          if [ -n "${{ inputs.policy_setup_run }}" ]; then
+            POLICY_ROUND0="$HOME/wcollapse-shared/drqv2/${{ inputs.policy_setup_run }}/round0"
+            test -d "$POLICY_ROUND0" || { echo "missing policy round0 $POLICY_ROUND0"; exit 1; }
+            POLICY_ARG="--policy_round0_dir $POLICY_ROUND0"
+            echo "[fanout] policy from $POLICY_ROUND0 (WM from $ROUND0)"
+          fi
+
           IFS=',' read -ra CONDS <<< "${{ inputs.conditions }}"
           IFS=',' read -ra SEEDS <<< "${{ inputs.seeds }}"
 
@@ -159,6 +172,7 @@ jobs:
                 --overrides seed=${seed} ${EVAL_OVERRIDE} \
                 --output_dir "${OUT}" \
                 --round0_dir "${ROUND0}" \
+                ${POLICY_ARG} \
                 --probe_bank_path "${PROBE}" \
                 > "${OUT}/train.log" 2>&1 &
               PIDS+=($!)

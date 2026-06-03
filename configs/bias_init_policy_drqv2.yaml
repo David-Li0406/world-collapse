@@ -1,0 +1,29 @@
+# Setting 1 — policy-seeded bias (no permanent split).
+#
+# Bias the TRAINING goals to region A only during the first feedback iteration
+# (frame < bias_warmup_frames), then sample goals from the FULL space. The
+# policy starts skewed toward A; we watch whether the policy<->WM loop ENLARGES
+# that skew (collapse) instead of re-broadening once goals go full-space.
+#
+# Measurement (SR in A vs B, WM error A vs B, coverage) runs every eval via the
+# fixed A/B split regardless of the training goal distribution.
+#
+# Compose with a WM regime via --condition:
+#   collapse_prone (recency WM) = amplifier (expected to collapse);
+#   frozen_wm                   = control (cannot forget -> should NOT amplify).
+# Mount the standard UNBIASED round-0 (e.g. setup_run=drqv2-v2).
+#
+# Self-contained K=5 / 300k macro-loop (folds in macroloop_long settings).
+
+num_train_frames: 300000
+eval_every_frames: 20000
+
+gen_every_steps: 60000      # K=5 imag refreshes (60k/120k/180k/240k/300k)
+gen_batch: 512
+init_gen_times: 2
+imag_buffer_size: 6000      # cycled buffer
+
+bias_goal: false            # NO permanent split
+measure_split: true         # always measure SR/err/coverage in A vs B
+measure_bias_fraction: 0.5  # A = lower goal-x half, B = upper half
+bias_warmup_frames: 60000   # seed: bias training goals to A for the 1st iter only

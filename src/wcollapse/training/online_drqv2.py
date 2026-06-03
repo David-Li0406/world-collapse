@@ -180,6 +180,7 @@ def run(
     condition: str | None = None,
     round0_dir: Path | None = None,
     probe_bank_path: Path | None = None,
+    policy_round0_dir: Path | None = None,
 ) -> None:
     assert mode in {"round0", "online"}
     if mode == "online":
@@ -201,27 +202,66 @@ def run(
         int(cfg.seed) + 1000, str(cfg.camera), int(cfg.duration), float(cfg.succ_bonus),
     )
 
-    # ---- bias_goal: trained vs holdout sub-region split (Phase B only) ----
-    trained_sub = None
-    holdout_sub = None
-    if mode == "online" and bool(cfg.get("bias_goal", False)):
+    # ---- goal-region split: region A (lower goal-x half) vs B (upper half) ----
+    # A/B are used for (a) MEASUREMENT (goal_shift_eval reports SR/err in A and B
+    # every eval) and (b) SEEDING/CONTROLLING the TRAINING goal distribution.
+    # The two are decoupled: training may be biased only transiently (warmup) or
+    # not at all, while measurement always reports A vs B.
+    #   - legacy permanent split:      bias_goal=true  (collapse_prone etc.)
+    #   - measure-only (no train bias): measure_split=true (init-bias settings)
+    #   - Setting 1 (policy-seeded):    bias_warmup_frames>0 → A during warmup only
+    #   - Setting 2 (WM-seeded):        round-0 collect_bias_prob>0 → oversample A
+    trained_sub = None   # = region A (measurement)
+    holdout_sub = None   # = region B (measurement)
+    region_A = None      # training-bias region
+    online_measure = mode == "online" and (
+        bool(cfg.get("bias_goal", False)) or bool(cfg.get("measure_split", False))
+    )
+    round0_collect = mode == "round0" and float(cfg.get("collect_bias_prob", 0.0)) > 0.0
+    if online_measure or round0_collect:
         inner = _drill_inner(train_env)
         gl, gh = inner.goal_low, inner.goal_high
-        frac = float(cfg.get("bias_fraction", 0.5))
+        frac = float(cfg.get("measure_bias_fraction",
+                             cfg.get("collect_bias_fraction",
+                                     cfg.get("bias_fraction", 0.5))))
         split_x = float(gl[0] + (gh[0] - gl[0]) * frac)
-        trained_lo = gl.copy(); trained_hi = gh.copy(); trained_hi[0] = split_x
-        holdout_lo = gl.copy(); holdout_hi = gh.copy(); holdout_lo[0] = split_x
-        trained_sub = (trained_lo, trained_hi)
-        holdout_sub = (holdout_lo, holdout_hi)
-        inner.set_goal_subregion(trained_lo, trained_hi)
-        # Static partition: probes with goal_x < split_x are "trained subregion".
+        A_lo = gl.copy(); A_hi = gh.copy(); A_hi[0] = split_x
+        B_lo = gl.copy(); B_hi = gh.copy(); B_lo[0] = split_x
+        region_A = (A_lo, A_hi)
+        # Static partition: probes with goal_x < split_x are region A.
         OmegaConf.set_struct(cfg, False)
         cfg.static_goal_split = split_x
-        print(
-            f"[bias_goal] trained x ∈ [{trained_lo[0]:.3f}, {split_x:.3f}], "
-            f"holdout x ∈ [{split_x:.3f}, {holdout_hi[0]:.3f}]",
-            flush=True,
-        )
+        if online_measure:
+            trained_sub = (A_lo, A_hi)
+            holdout_sub = (B_lo, B_hi)
+            print(f"[measure_split] A x ∈ [{A_lo[0]:.3f}, {split_x:.3f}], "
+                  f"B x ∈ [{split_x:.3f}, {B_hi[0]:.3f}]", flush=True)
+        if round0_collect:
+            print(f"[collect_bias] round-0 oversamples A x ∈ [{A_lo[0]:.3f}, {split_x:.3f}] "
+                  f"with prob {float(cfg.get('collect_bias_prob')):.2f}", flush=True)
+
+    # Per-episode training goal-region controller (decoupled from measurement).
+    _warmup_frames = int(cfg.get("bias_warmup_frames", 0))
+    _collect_p = float(cfg.get("collect_bias_prob", 0.0))
+    _permanent_bias = mode == "online" and bool(cfg.get("bias_goal", False))
+
+    def _training_goal_region(frame):
+        if mode == "round0":
+            if region_A is not None and _collect_p > 0.0 and np.random.random() < _collect_p:
+                return region_A          # oversample A during phase-0 collection
+            return None                  # full goal space
+        if _permanent_bias:
+            return region_A              # legacy: permanent A (collapse_prone etc.)
+        if _warmup_frames > 0 and frame < _warmup_frames:
+            return region_A              # Setting 1: bias to A during warmup only
+        return None                      # full goal space (Setting 2 Phase B / post-warmup)
+
+    def _apply_training_region(frame):
+        reg = _training_goal_region(frame)
+        if reg is None:
+            _drill_inner(train_env).set_goal_subregion(None, None)
+        else:
+            _drill_inner(train_env).set_goal_subregion(*reg)
 
     # ---- agent + WM ----
     agent_cfg = OmegaConf.create({
@@ -337,9 +377,13 @@ def run(
     wm_baseline = None
     if mode == "online":
         video_predictor.load_snapshot(str(round0_dir))
-        snap = torch.load(str(round0_dir / "snapshot.pt"), map_location=device, weights_only=False)
+        # Policy may come from a DIFFERENT round-0 than the WM. Setting 2
+        # (WM-seeded bias) mounts a biased M_0 from round0_dir but an UNBIASED
+        # policy from policy_round0_dir, isolating WM bias from policy bias.
+        pol_dir = policy_round0_dir if policy_round0_dir is not None else round0_dir
+        snap = torch.load(str(pol_dir / "snapshot.pt"), map_location=device, weights_only=False)
         agent = snap["agent"]
-        print(f"[online] loaded WM + DrQ-v2 from {round0_dir}", flush=True)
+        print(f"[online] loaded WM from {round0_dir}, policy from {pol_dir}", flush=True)
         wm_baseline = VideoPredictor(device, cfg.world_model)
         wm_baseline.load_snapshot(str(round0_dir))
         # Apply the same FP32 + scaler/rollout patches as video_predictor so
@@ -507,8 +551,9 @@ def run(
                 )
                 for k, v in beh.items():
                     metrics[f"beh/{k}"] = v
-                # Restore trained subregion on train_env (eval_env was reset internally).
-                _drill_inner(train_env).set_goal_subregion(*trained_sub)
+                # Restore the current training goal-region on train_env
+                # (eval_env was reset internally; may be full-space, not A).
+                _apply_training_region(global_step)
         return metrics
 
     # ---- main loop ----
@@ -526,6 +571,7 @@ def run(
     init_model = False
     init_gen = False
 
+    _apply_training_region(0)
     time_step = train_env.reset()
     _record(replay_storage, time_step)
 
@@ -535,6 +581,7 @@ def run(
     while train_until(global_step):
         if time_step.last():
             global_episode += 1
+            _apply_training_region(global_step)
             time_step = train_env.reset()
             _record(replay_storage, time_step)
 
@@ -608,6 +655,9 @@ def main():
     p.add_argument("--output_dir", required=True)
     p.add_argument("--condition", default=None)
     p.add_argument("--round0_dir", default=None)
+    p.add_argument("--policy_round0_dir", default=None,
+                   help="Load the policy from a DIFFERENT round-0 than the WM "
+                        "(Setting 2: biased WM + clean policy). Defaults to round0_dir.")
     p.add_argument("--probe_bank_path", default=None)
     args = p.parse_args()
 
@@ -622,6 +672,7 @@ def main():
         condition=args.condition,
         round0_dir=Path(args.round0_dir) if args.round0_dir else None,
         probe_bank_path=Path(args.probe_bank_path) if args.probe_bank_path else None,
+        policy_round0_dir=Path(args.policy_round0_dir) if args.policy_round0_dir else None,
     )
 
 

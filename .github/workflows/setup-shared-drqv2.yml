@@ -12,6 +12,10 @@ on:
         description: "Shared setup run name"
         required: true
         default: "drqv2-v1"
+      round0_overlay:
+        description: "Round-0 overlay (without _drqv2.yaml). 'round0'=unbiased; 'round0_wmbias'=A-skewed (Setting 2)."
+        required: false
+        default: "round0"
       smoke:
         description: "If true, use debug overlay (~10 min instead of ~2-3 h)"
         required: false
@@ -212,18 +216,19 @@ jobs:
           mkdir -p "$OUT"
 
           TMP_CFG="$(mktemp -t drqv2_round0.XXXXXX.yaml)"
+          ROUND0_CFG="configs/${{ inputs.round0_overlay }}_drqv2.yaml"
           if [ "${{ inputs.smoke }}" = "true" ]; then
             uv run python -c "
           from omegaconf import OmegaConf
           base = OmegaConf.load('configs/drqv2_base.yaml')
-          o1 = OmegaConf.load('configs/round0_drqv2.yaml')
+          o1 = OmegaConf.load('${ROUND0_CFG}')
           o2 = OmegaConf.load('configs/debug_drqv2.yaml')
           OmegaConf.save(OmegaConf.merge(base, o1, o2), '${TMP_CFG}')"
           else
             uv run python -c "
           from omegaconf import OmegaConf
           base = OmegaConf.load('configs/drqv2_base.yaml')
-          o1 = OmegaConf.load('configs/round0_drqv2.yaml')
+          o1 = OmegaConf.load('${ROUND0_CFG}')
           OmegaConf.save(OmegaConf.merge(base, o1), '${TMP_CFG}')"
           fi
 
