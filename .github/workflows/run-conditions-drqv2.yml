@@ -39,6 +39,10 @@ on:
         description: "Load the POLICY from this setup_run's round0 instead of setup_run (Setting 2: biased WM + clean policy). Empty = same as setup_run."
         required: false
         default: ""
+      gpus:
+        description: "Space-separated GPU ids for the round-robin (e.g. '6 7' to leave 0-5 for another run). Default: all 8."
+        required: false
+        default: "0 1 2 3 4 5 6 7"
 
 jobs:
   run:
@@ -124,8 +128,11 @@ jobs:
           IFS=',' read -ra CONDS <<< "${{ inputs.conditions }}"
           IFS=',' read -ra SEEDS <<< "${{ inputs.seeds }}"
 
-          # GPU round-robin (CLAUDE.md: use GPUs 0-7 on Machine B).
-          GPUS=(0 1 2 3 4 5 6 7)
+          # GPU round-robin over the ids in the `gpus` input (default all 8).
+          # Pin to a subset (e.g. "6 7") to run concurrently with another job
+          # that holds the rest (requires a 2nd self-hosted runner for true
+          # concurrency; one runner runs one job at a time).
+          GPUS=(${{ inputs.gpus }})
           PIDS=()
           IDX=0
           for cond in "${CONDS[@]}"; do
