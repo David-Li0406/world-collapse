@@ -39,6 +39,10 @@ on:
 jobs:
   run:
     runs-on: [self-hosted, Linux, X64]
+    # GitHub's default job timeout is 360 min (6h). Long sweeps (400k+
+    # frames, or 5-seed × n_eval=50) exceed that and get cancelled mid-run
+    # (Iter F died at exactly 6h). Allow up to 24h.
+    timeout-minutes: 1440
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
