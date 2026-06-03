@@ -20,6 +20,10 @@ on:
         description: "If true, use debug overlay (~10 min instead of ~2-3 h)"
         required: false
         default: "false"
+      gpu:
+        description: "GPU id for the build + round-0 steps (single GPU). Pick one free of any concurrent run."
+        required: false
+        default: "4"
 
 jobs:
   run:
@@ -141,7 +145,7 @@ jobs:
         run: |
           export HF_HOME="$HOME/hf_cache"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
-          export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
+          export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-${{ inputs.gpu }}}"
           export MUJOCO_GL=egl
           # mujoco 3.x reads MUJOCO_EGL_DEVICE_ID (not EGL_DEVICE_ID).
           # With CUDA_VISIBLE_DEVICES restricting visibility, the visible GPU is
@@ -194,7 +198,7 @@ jobs:
         run: |
           export HF_HOME="$HOME/hf_cache"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
-          export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
+          export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-${{ inputs.gpu }}}"
           export MUJOCO_GL=egl
           # mujoco 3.x reads MUJOCO_EGL_DEVICE_ID (not EGL_DEVICE_ID).
           # With CUDA_VISIBLE_DEVICES restricting visibility, the visible GPU is
@@ -210,7 +214,7 @@ jobs:
           export PYTHONUNBUFFERED=1
           export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
           export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
-          export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
+          export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-${{ inputs.gpu }}}"
 
           OUT="runs/${{ inputs.run_name }}/round0"
           mkdir -p "$OUT"
