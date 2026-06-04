@@ -1,0 +1,9 @@
+# Variance study (GPU 1): reproduce iVideoGPT-style standard MBRL (mode=round0)
+# on push-v3 at matched budget, but ALSO report SR_A/SR_B for comparison.
+# Stacks on base + round0_drqv2. Training stays full-distribution (no goal
+# bias); measure_split only adds an A/B measurement at eval time.
+num_train_frames: 260002      # match iVideoGPT mbrl env-frame budget
+eval_every_frames: 20000      # same eval cadence as the GPU-0 run
+bias_goal: false              # standard MBRL: full goal distribution (no restriction)
+measure_split: true           # report SR_A/SR_B (measurement only; training unbiased)
+measure_bias_fraction: 0.5    # same A/B split as the bias runs, for comparability

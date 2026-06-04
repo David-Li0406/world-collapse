@@ -1,0 +1,7 @@
+# Variance study (GPU 0): phaseB-v2 setting at iVideoGPT's MBRL budget.
+# Stacks on base + a condition (collapse_prone). Keeps the dense loop
+# (gen_every_steps=200, gen_batch=32) and bias_goal A/B split from the
+# condition; only matches iVideoGPT's training budget. num_eval_episodes is
+# passed as a CLI override (=20) by the workflow.
+num_train_frames: 260002      # match iVideoGPT mbrl env-frame budget
+eval_every_frames: 20000      # 13 eval points over 260k (limits probe-eval overhead)

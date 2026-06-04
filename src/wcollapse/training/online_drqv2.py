@@ -217,8 +217,11 @@ def run(
     online_measure = mode == "online" and (
         bool(cfg.get("bias_goal", False)) or bool(cfg.get("measure_split", False))
     )
+    # round-0 standard-MBRL run can still REPORT SR_A/SR_B (measurement only;
+    # training stays full-distribution) when measure_split is set.
+    round0_measure = mode == "round0" and bool(cfg.get("measure_split", False))
     round0_collect = mode == "round0" and float(cfg.get("collect_bias_prob", 0.0)) > 0.0
-    if online_measure or round0_collect:
+    if online_measure or round0_collect or round0_measure:
         inner = _drill_inner(train_env)
         gl, gh = inner.goal_low, inner.goal_high
         frac = float(cfg.get("measure_bias_fraction",
@@ -231,7 +234,7 @@ def run(
         # Static partition: probes with goal_x < split_x are region A.
         OmegaConf.set_struct(cfg, False)
         cfg.static_goal_split = split_x
-        if online_measure:
+        if online_measure or round0_measure:
             trained_sub = (A_lo, A_hi)
             holdout_sub = (B_lo, B_hi)
             print(f"[measure_split] A x ∈ [{A_lo[0]:.3f}, {split_x:.3f}], "
@@ -542,18 +545,20 @@ def run(
             for k, v in wm.items():
                 metrics[f"wm/{k}"] = v
 
-            if trained_sub is not None and holdout_sub is not None:
-                # Use the eval env with sub-region swapping.
-                beh = goal_shift_eval(
-                    eval_env=eval_env, agent=agent,
-                    trained_subregion=trained_sub, holdout_subregion=holdout_sub,
-                    n_eval_episodes=int(cfg.num_eval_episodes), global_step=global_step,
-                )
-                for k, v in beh.items():
-                    metrics[f"beh/{k}"] = v
-                # Restore the current training goal-region on train_env
-                # (eval_env was reset internally; may be full-space, not A).
-                _apply_training_region(global_step)
+        # Behavioral A/B eval (SR_A/SR_B) — runs whenever a measurement split is
+        # defined, independent of mode / probe-bank. So round-0 standard-MBRL
+        # runs with measure_split also report SR_A/SR_B (training stays full).
+        if trained_sub is not None and holdout_sub is not None:
+            beh = goal_shift_eval(
+                eval_env=eval_env, agent=agent,
+                trained_subregion=trained_sub, holdout_subregion=holdout_sub,
+                n_eval_episodes=int(cfg.num_eval_episodes), global_step=global_step,
+            )
+            for k, v in beh.items():
+                metrics[f"beh/{k}"] = v
+            # Restore the current training goal-region on train_env
+            # (eval_env was reset internally; may be full-space, not A).
+            _apply_training_region(global_step)
         return metrics
 
     # ---- main loop ----

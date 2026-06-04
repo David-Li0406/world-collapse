@@ -1,0 +1,123 @@
+name: run-round0-sweep
+
+# Standard MBRL (mode=round0) seed sweep on a pinned GPU — used to reproduce
+# iVideoGPT-style MBRL (continual WM, no goal bias) for the variance study.
+# No probe bank / round0_dir needed (round0 trains from the OXE-pretrained WM).
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_name:
+        description: "Run name prefix"
+        required: true
+        default: "round0-sweep"
+      seeds:
+        description: "Comma list of seeds (e.g. 1,2,3)"
+        required: true
+        default: "1,2,3"
+      overlay:
+        description: "Round-0 overlay (without _drqv2.yaml) stacked on base+round0_drqv2"
+        required: false
+        default: "round0_measure"
+      num_eval_episodes:
+        description: "num_eval_episodes override (e.g. 20)"
+        required: false
+        default: "20"
+      gpu:
+        description: "Single GPU id all seeds share (e.g. 1)"
+        required: false
+        default: "1"
+
+jobs:
+  run:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 1440
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show machine info
+        run: |
+          hostname
+          nvidia-smi -L || true
+
+      - name: Setup uv environment
+        run: |
+          export UV_CACHE_DIR="$HOME/.cache/uv"
+          uv sync --frozen
+
+      - name: Stage iVideoGPT pretrained models
+        run: |
+          export HF_HOME="$HOME/hf_cache"
+          DEST="iVideoGPT/pretrained_models/ivideogpt-oxe-64-act-free"
+          if [ ! -f "$DEST/tokenizer/diffusion_pytorch_model.safetensors" ] || \
+             [ ! -f "$DEST/transformer/model.safetensors" ]; then
+            mkdir -p "$DEST"
+            uv run python -c "
+          from huggingface_hub import snapshot_download
+          snapshot_download(repo_id='thuml/ivideogpt-oxe-64-act-free', local_dir='$DEST', local_dir_use_symlinks=True)
+          "
+          fi
+
+      - name: Pre-stage LPIPS vgg.pth (avoid parallel-download race)
+        run: |
+          export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
+          export HF_HOME="$HOME/hf_cache"
+          uv run python -c "from ivideogpt.vq_model.lpips import LPIPS; LPIPS()"
+
+      - name: Round-0 sweep fanout
+        shell: bash -eo pipefail {0}
+        run: |
+          export HF_HOME="$HOME/hf_cache"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL=egl
+          unset PYOPENGL_PLATFORM
+          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
+          if [ -n "$NVIDIA_PREFIX" ]; then
+            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
+            export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
+            unset __EGL_VENDOR_LIBRARY_DIRS
+          fi
+          export PYTHONUNBUFFERED=1
+          export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
+          export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
+
+          IFS=',' read -ra SEEDS <<< "${{ inputs.seeds }}"
+          GPU="${{ inputs.gpu }}"
+          PIDS=()
+          for seed in "${SEEDS[@]}"; do
+            OUT="runs/${{ inputs.run_name }}/round0-seed${seed}"
+            mkdir -p "$OUT"
+            TMP_CFG="$(mktemp -t r0_s${seed}.XXXXXX.yaml)"
+            uv run python -c "
+          from omegaconf import OmegaConf
+          cfgs = [OmegaConf.load('configs/drqv2_base.yaml'),
+                  OmegaConf.load('configs/round0_drqv2.yaml'),
+                  OmegaConf.load('configs/${{ inputs.overlay }}_drqv2.yaml')]
+          OmegaConf.save(OmegaConf.merge(*cfgs), '${TMP_CFG}')"
+            echo "[round0-sweep] seed=${seed} on GPU ${GPU} -> ${OUT}"
+            CUDA_VISIBLE_DEVICES="${GPU}" MUJOCO_EGL_DEVICE_ID=0 uv run python -u -m wcollapse.training.online_drqv2 \
+              --mode round0 \
+              --config "${TMP_CFG}" \
+              --overrides seed=${seed} num_eval_episodes=${{ inputs.num_eval_episodes }} \
+              --output_dir "${OUT}" \
+              > "${OUT}/train.log" 2>&1 &
+            PIDS+=($!)
+          done
+          echo "[round0-sweep] launched ${#PIDS[@]} jobs; waiting..."
+          FAIL=0
+          for pid in "${PIDS[@]}"; do wait "$pid" || FAIL=$((FAIL+1)); done
+          echo "[round0-sweep] done. failures: $FAIL"
+          if [ "$FAIL" -gt 0 ]; then exit 1; fi
+
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.run_name }}
+          path: |
+            runs/${{ inputs.run_name }}/**/train.log
+            runs/${{ inputs.run_name }}/**/metrics.jsonl
+            runs/${{ inputs.run_name }}/**/config.yaml
