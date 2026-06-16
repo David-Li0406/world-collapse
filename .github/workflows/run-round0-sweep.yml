@@ -74,12 +74,43 @@ jobs:
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
           export MUJOCO_GL=egl
           unset PYOPENGL_PLATFORM
+          # Locate the NVIDIA EGL vendor ICD robustly across machines:
+          # TENCENT64 ships it under /opt/nvidia-*; standard driver installs put
+          # it at the glvnd default path. EGL enumerates 0 devices if neither the
+          # vendor JSON nor libEGL_nvidia is discoverable.
           NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
-          if [ -n "$NVIDIA_PREFIX" ]; then
+          if [ -n "$NVIDIA_PREFIX" ] && [ -f "${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json" ]; then
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
             export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
             unset __EGL_VENDOR_LIBRARY_DIRS
+          else
+            for j in /usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+                     /etc/glvnd/egl_vendor.d/10_nvidia.json; do
+              [ -f "$j" ] && { export __EGL_VENDOR_LIBRARY_FILENAMES="$j"; break; }
+            done
+            NV_LIB_DIR=$(dirname "$(find /usr/lib* /lib* -name 'libEGL_nvidia.so*' 2>/dev/null | head -1)" 2>/dev/null)
+            [ -n "$NV_LIB_DIR" ] && [ "$NV_LIB_DIR" != "." ] && \
+              export LD_LIBRARY_PATH="${NV_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           fi
+          echo "[egl-diag] MUJOCO_GL=$MUJOCO_GL  NVIDIA_PREFIX=${NVIDIA_PREFIX:-<none>}"
+          echo "[egl-diag] __EGL_VENDOR_LIBRARY_FILENAMES=${__EGL_VENDOR_LIBRARY_FILENAMES:-<unset>}"
+          echo "[egl-diag] glvnd dir:"; ls -l /usr/share/glvnd/egl_vendor.d/ 2>&1 | sed 's/^/[egl-diag]   /'
+          echo "[egl-diag] libEGL_nvidia:"; find /usr/lib* /lib* -name 'libEGL_nvidia.so*' 2>/dev/null | sed 's/^/[egl-diag]   /'
+          echo "[egl-diag] EGL device probe:"
+          uv run python - <<'PYEGL' 2>&1 | sed 's/^/[egl-diag]   /' || true
+          import os
+          os.environ.setdefault("MUJOCO_GL", "egl")
+          try:
+              from mujoco.egl import egl_ext as _e
+              from OpenGL import EGL
+              import ctypes
+              n = EGL.EGLint()
+              devs = (EGL.EGLDeviceEXT * 16)()
+              ok = _e.eglQueryDevicesEXT(16, devs, ctypes.pointer(n))
+              print("eglQueryDevicesEXT ok=%s num_devices=%s" % (ok, n.value))
+          except Exception as ex:
+              print("probe failed:", repr(ex))
+          PYEGL
           export PYTHONUNBUFFERED=1
           export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
           export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
