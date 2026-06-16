@@ -16,6 +16,10 @@ on:
         description: "Round-0 overlay (without _drqv2.yaml). 'round0'=unbiased; 'round0_wmbias'=A-skewed (Setting 2)."
         required: false
         default: "round0"
+      task:
+        description: "Meta-world task (dashed v3 name), e.g. push-v3 or coffee-push-v3."
+        required: false
+        default: "push-v3"
       smoke:
         description: "If true, use debug overlay (~10 min instead of ~2-3 h)"
         required: false
@@ -52,7 +56,7 @@ jobs:
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
           export MUJOCO_GL=egl
           export EGL_DEVICE_ID="${CUDA_VISIBLE_DEVICES%%,*}"
-          unset PYOPENGL_PLATFORM
+          export PYOPENGL_PLATFORM=egl
           ./scripts/prepare_data.sh
 
       - name: Stage iVideoGPT pretrained models
@@ -72,74 +76,6 @@ jobs:
           fi
           ls -la "$DEST" "$DEST/tokenizer" "$DEST/transformer"
 
-      - name: Probe render backends
-        run: |
-          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
-          echo "--- NVIDIA prefix: ${NVIDIA_PREFIX:-MISSING} ---"
-          ls -la "${NVIDIA_PREFIX}/lib64/" 2>&1 | grep -iE "egl|gl\." | head -20
-          echo "--- libEGL anywhere (looking for glvnd dispatch lib) ---"
-          (find /usr /opt /etc /lib -maxdepth 6 -name "libEGL.so*" 2>/dev/null || true) | head -20
-          echo "--- libGLdispatch (glvnd marker) ---"
-          (find /usr /opt /etc /lib -maxdepth 6 -name "libGLdispatch*" 2>/dev/null || true) | head -10
-          echo "--- All EGL ICD configs ---"
-          ls -la /usr/share/glvnd/egl_vendor.d/ /etc/glvnd/egl_vendor.d/ 2>&1 || echo "no glvnd dirs"
-          cat "${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json" 2>&1 || echo "(no nvidia ICD json)"
-          echo "--- libOSMesa anywhere ---"
-          (find /usr /opt /etc /lib -maxdepth 6 -name "libOSMesa*" 2>/dev/null || true) | head -10
-          echo "--- ldconfig EGL entries ---"
-          ldconfig -p 2>/dev/null | grep -iE "egl|osmesa|glvnd" | head -20
-          echo "--- DRI render nodes + groups ---"
-          ls -la /dev/dri/ 2>&1 || echo "no /dev/dri"
-          id; getent group video render 2>&1 || true
-          echo "--- nvidia-smi driver ---"
-          nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>&1 | head -1
-          echo "--- /dev/nvidia* ---"
-          ls -la /dev/nvidia* 2>&1 || echo "no /dev/nvidia* devices"
-          echo "--- libEGL.so.1 deps (glvnd marker = depends on libGLdispatch) ---"
-          ldd /usr/lib64/libEGL.so.1 2>&1 | head -10
-          echo "--- eglinfo if available ---"
-          which eglinfo 2>&1 || echo "no eglinfo"
-          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
-          if [ -n "$NVIDIA_PREFIX" ]; then
-            echo "--- NVIDIA lib64 full listing (find deps) ---"
-            ls -la "${NVIDIA_PREFIX}/lib64/" 2>&1 | head -50
-            echo "--- ldd libEGL_nvidia.so.0 (need ALL deps resolved) ---"
-            ldd "${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0" 2>&1 | head -30
-            echo "--- ldd libEGL_nvidia.so.0 with LD_LIBRARY_PATH ---"
-            LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}" ldd "${NVIDIA_PREFIX}/lib64/libEGL_nvidia.so.0" 2>&1 | head -30
-            echo "--- EGL device enumeration via NVIDIA ICD ---"
-            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
-            export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
-            unset __EGL_VENDOR_LIBRARY_DIRS
-            uv run python - <<'PY' 2>&1 || true
-          import os, ctypes
-          print("__EGL_VENDOR_LIBRARY_FILENAMES=", os.environ.get("__EGL_VENDOR_LIBRARY_FILENAMES"))
-          ctypes.cdll.LoadLibrary("/opt/nvidia-535.274.02/lib64/libEGL_nvidia.so.0")
-          egl = ctypes.cdll.LoadLibrary("libEGL.so.1")
-          egl.eglQueryString.restype = ctypes.c_char_p
-          ext = egl.eglQueryString(0, 0x3055).decode()
-          print("EGL_EXTENSIONS (client):", ext)
-          egl.eglGetProcAddress.restype = ctypes.c_void_p
-          QueryDevices = ctypes.CFUNCTYPE(
-              ctypes.c_uint, ctypes.c_int,
-              ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_int),
-          )(egl.eglGetProcAddress(b"eglQueryDevicesEXT"))
-          maxn = 16
-          devs = (ctypes.c_void_p * maxn)()
-          n = ctypes.c_int(0)
-          ok = QueryDevices(maxn, devs, ctypes.byref(n))
-          print(f"eglQueryDevicesEXT ok={ok} n_devices={n.value}")
-          QDS = ctypes.CFUNCTYPE(ctypes.c_char_p, ctypes.c_void_p, ctypes.c_int)(
-              egl.eglGetProcAddress(b"eglQueryDeviceStringEXT"))
-          GPD = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p)(
-              egl.eglGetProcAddress(b"eglGetPlatformDisplayEXT"))
-          for i in range(n.value):
-              vendor = QDS(devs[i], 0x3055)
-              disp = GPD(0x313F, devs[i], None)
-              print(f"  device[{i}] ext={vendor!r}  display={disp} (0=NO_DISPLAY)")
-          PY
-          fi
-
       - name: Build probe bank
         shell: bash -eo pipefail {0}
         run: |
@@ -151,7 +87,8 @@ jobs:
           # With CUDA_VISIBLE_DEVICES restricting visibility, the visible GPU is
           # at index 0 inside the process.
           export MUJOCO_EGL_DEVICE_ID=0
-          unset EGL_DEVICE_ID PYOPENGL_PLATFORM
+          unset EGL_DEVICE_ID
+          export PYOPENGL_PLATFORM=egl
           # NVIDIA EGL ICD lives under /opt/nvidia-* on this runner; put its lib
           # dir on LD_LIBRARY_PATH and point glvnd at the right ICD JSON so
           # mujoco's EGL device-mode resolves NVIDIA's libEGL_nvidia (rather
@@ -185,7 +122,7 @@ jobs:
           fi
 
           uv run python -u scripts/build_probe_bank.py \
-            --task push-v3 \
+            --task "${{ inputs.task }}" \
             --n_seed_episodes "$N_EPS" \
             --n_probes "$N_PROBES" \
             --horizon 15 \
@@ -204,7 +141,8 @@ jobs:
           # With CUDA_VISIBLE_DEVICES restricting visibility, the visible GPU is
           # at index 0 inside the process.
           export MUJOCO_EGL_DEVICE_ID=0
-          unset EGL_DEVICE_ID PYOPENGL_PLATFORM
+          unset EGL_DEVICE_ID
+          export PYOPENGL_PLATFORM=egl
           NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
           if [ -n "$NVIDIA_PREFIX" ]; then
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
@@ -239,6 +177,7 @@ jobs:
           uv run python -u -m wcollapse.training.online_drqv2 \
             --mode round0 \
             --config "${TMP_CFG}" \
+            --overrides task_name="${{ inputs.task }}" \
             --output_dir "$OUT" \
             2>&1 | tee "$OUT/train.log"
 

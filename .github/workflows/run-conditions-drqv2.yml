@@ -99,8 +99,10 @@ jobs:
         run: |
           export HF_HOME="$HOME/hf_cache"
           export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          # PYOPENGL_PLATFORM=egl is required (unset breaks headless EGL on the
+          # H20 machine). Version-agnostic /opt/nvidia-* glob works on both runners.
           export MUJOCO_GL=egl
-          unset PYOPENGL_PLATFORM
+          export PYOPENGL_PLATFORM=egl
           NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
           if [ -n "$NVIDIA_PREFIX" ]; then
             export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"

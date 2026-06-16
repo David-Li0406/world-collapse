@@ -25,7 +25,9 @@ import numpy as np
 from gymnasium.spaces import Box
 
 import metaworld
-from metaworld.envs.sawyer_push_v3 import SawyerPushEnvV3
+# NOTE: we no longer hard-import a single env class. Any Meta-world v3 task whose
+# random_reset_space is laid out as [obj_xyz(3), goal_xyz(3)] works (push-v3,
+# coffee-push-v3, ...). The concrete class is resolved at runtime via MT1.
 
 # Indices into the 39-element observation produced by SawyerXYZEnv._get_obs.
 # See Metaworld/metaworld/sawyer_xyz_env.py:475-527.
@@ -77,7 +79,9 @@ class MetaworldVisualEnv:
     standard 5-tuple.
     """
 
-    TASK_NAMES = {"push-v3"}
+    # Tasks sharing push-v3's [obj_xyz, goal_xyz] reset layout. Verified that
+    # coffee-push-v3 has the same 6-D rand_vec and a splittable goal-x span.
+    TASK_NAMES = {"push-v3", "coffee-push-v3"}
 
     def __init__(
         self,
@@ -101,7 +105,7 @@ class MetaworldVisualEnv:
         # directly (set_env_state, _last_rand_vec, _target_pos).
         bench = metaworld.MT1(task_name, seed=seed)
         env_cls = bench.train_classes[task_name]
-        self._env: SawyerPushEnvV3 = env_cls(
+        self._env = env_cls(
             render_mode="rgb_array",
             camera_name=camera_name,
             height=image_size,

@@ -1,0 +1,9 @@
+# coffee_push at iVideoGPT's MBRL budget + dense loop (paper training settings).
+# Stacks on base + a condition (collapse_prone / frozen_wm). Switches the task to
+# coffee-push-v3 (the v3 equivalent of the paper's coffee_push) and matches the
+# paper's env-frame budget + eval cadence. Keeps the dense loop (gen_every_steps=
+# 200 from base -> K~1300) and the condition's bias_goal A/B split.
+# num_eval_episodes is passed as a CLI override (=20) by the workflow.
+task_name: coffee-push-v3
+num_train_frames: 260002      # match iVideoGPT mbrl env-frame budget
+eval_every_frames: 20000      # 13 eval points over 260k (limits probe-eval overhead)

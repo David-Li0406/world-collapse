@@ -394,6 +394,8 @@ def make(
     norm = name.replace("_", "-")
     if norm in {"push", "push-v3"}:
         norm = "push-v3"
+    elif norm in {"coffee-push", "coffee-push-v3"}:
+        norm = "coffee-push-v3"
     env = MetaWorldV3(
         name=norm,
         action_repeat=action_repeat,
