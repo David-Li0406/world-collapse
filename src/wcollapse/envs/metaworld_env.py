@@ -206,12 +206,55 @@ class MetaworldVisualEnv:
         return self._pack(obs, {"probe_replay": True}, reward=0.0, terminated=False, truncated=False)
 
     def step(self, action: np.ndarray) -> dict[str, Any]:
-        obs, reward, terminated, truncated, info = self._env.step(action.astype(np.float32))
+        _dbg = os.environ.get("WCOLLAPSE_STEP_DEBUG")
+        if _dbg:
+            import time as _t
+            _t0 = _t.time()
+            obs, reward, terminated, truncated, info = self._env.step(action.astype(np.float32))
+            _finite = bool(np.isfinite(obs).all())
+            print(f"[stepdbg] t={self._steps} phys_dt={_t.time()-_t0:.3f}s finite={_finite}", flush=True)
+        else:
+            obs, reward, terminated, truncated, info = self._env.step(action.astype(np.float32))
         self._steps += 1
         if self._steps >= self.max_episode_steps:
             truncated = True
+        # Guard: a degenerate physics state (non-finite obs) hangs the EGL
+        # renderer (NaN geom positions). Terminate this episode before rendering.
+        if not np.isfinite(obs).all():
+            print(f"[stepdbg] NON-FINITE obs at t={self._steps}; terminating episode pre-render", flush=True)
+            truncated = True
+            self._last_obs = obs
+            packed = self._pack_safe(obs, info, reward=float(reward),
+                                     terminated=bool(terminated), truncated=True)
+            return packed
+        if _dbg:
+            import time as _t
+            _t1 = _t.time()
+            packed = self._pack(obs, info, reward=float(reward),
+                                terminated=bool(terminated), truncated=bool(truncated))
+            print(f"[stepdbg] t={self._steps} render_dt={_t.time()-_t1:.3f}s", flush=True)
+            self._last_obs = obs
+            return packed
         self._last_obs = obs
         return self._pack(obs, info, reward=float(reward), terminated=bool(terminated), truncated=bool(truncated))
+
+    def _pack_safe(self, obs, info, reward, terminated, truncated) -> dict[str, Any]:
+        """Like _pack but reuses the last good frame instead of rendering a
+        degenerate (non-finite) state, which can hang the renderer."""
+        rgb = getattr(self, "_last_rgb", None)
+        if rgb is None:
+            rgb = np.zeros((self.image_size, self.image_size, 3), np.uint8)
+        safe_obs = np.nan_to_num(np.asarray(obs, np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        return {
+            "obs": safe_obs,
+            "rgb": rgb,
+            "semantic": semantic_from_obs(safe_obs),
+            "reward": reward,
+            "terminated": terminated,
+            "truncated": truncated,
+            "info": info,
+            "probe_state": self.get_probe_state(),
+        }
 
     def render(self) -> np.ndarray:
         """Return a uint8 HxWx3 RGB frame from the configured camera.
@@ -220,7 +263,9 @@ class MetaworldVisualEnv:
         force a contiguous copy so downstream torch/HDF5 paths don't trip.
         """
         rgb = self._env.render()
-        return np.ascontiguousarray(np.asarray(rgb, dtype=np.uint8))
+        rgb = np.ascontiguousarray(np.asarray(rgb, dtype=np.uint8))
+        self._last_rgb = rgb
+        return rgb
 
     def get_probe_state(self) -> ProbeState:
         """Snapshot enough state to replay this moment deterministically."""

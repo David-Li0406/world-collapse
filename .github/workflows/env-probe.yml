@@ -51,6 +51,7 @@ jobs:
             unset __EGL_VENDOR_LIBRARY_DIRS
           fi
           export PYTHONUNBUFFERED=1
+          export WCOLLAPSE_STEP_DEBUG=1
           export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
           export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
           CUDA_VISIBLE_DEVICES="${{ inputs.gpu }}" MUJOCO_EGL_DEVICE_ID=0 \
