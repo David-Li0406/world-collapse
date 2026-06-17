@@ -18,6 +18,7 @@ Two features the rest of the pipeline relies on:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
