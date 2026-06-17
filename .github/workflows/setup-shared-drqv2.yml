@@ -32,6 +32,8 @@ on:
 jobs:
   run:
     runs-on: [self-hosted, Linux, X64]
+    # Default GitHub job timeout is 6h; a real round-0 build can exceed that.
+    timeout-minutes: 1440
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4

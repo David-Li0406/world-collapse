@@ -89,12 +89,20 @@ def collect_seed_dataset(
     The proposal's recommendation (§4.3): broad coverage via a mixture of
     expert demos and random exploration.
     """
-    rng = np.random.default_rng(seed)
-    from metaworld.policies.sawyer_push_v3_policy import SawyerPushV3Policy
+    import time
 
-    scripted = SawyerPushV3Policy()
+    rng = np.random.default_rng(seed)
+    # Scripted expert must match the task — driving coffee-push with the push
+    # policy produces erratic actions that stall the sim. Pick by task_name.
+    if getattr(env, "task_name", "push-v3") == "coffee-push-v3":
+        from metaworld.policies.sawyer_coffee_push_v3_policy import SawyerCoffeePushV3Policy
+        scripted = SawyerCoffeePushV3Policy()
+    else:
+        from metaworld.policies.sawyer_push_v3_policy import SawyerPushV3Policy
+        scripted = SawyerPushV3Policy()
 
     trajectories: list[Trajectory] = []
+    t_start = time.time()
     for ep in range(n_episodes):
         ep_seed = int(rng.integers(0, 2**31 - 1))
         use_scripted = rng.random() < scripted_fraction
@@ -116,6 +124,11 @@ def collect_seed_dataset(
             seed=ep_seed,
         )
         trajectories.append(tr)
+        print(
+            f"[collect_seed] ep {ep + 1}/{n_episodes} ({source}) "
+            f"len={len(tr.actions)} elapsed={time.time() - t_start:.1f}s",
+            flush=True,
+        )
     return trajectories
 
 
