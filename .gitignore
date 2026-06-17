@@ -28,3 +28,8 @@ dist/
 # uv
 .python-version
 .claude/
+
+# dreamerv3 vendored: ignore run outputs/checkpoints
+/dreamerv3/logdir/
+dreamerv3/**/ckpt/
+dreamerv3/**/*.ckpt
