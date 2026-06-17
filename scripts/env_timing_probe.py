@@ -68,14 +68,30 @@ def probe(task: str, n_steps: int):
     print(f"  MAX:               phys={phys.max():7.1f}ms  render={rend.max():7.1f}ms", flush=True)
 
 
+def probe_collection(task: str, n_episodes: int):
+    """Exercise the REAL collect_seed_dataset path (per-episode reset +
+    get_probe_state) that stalled in the setup build."""
+    from wcollapse.training.collection import collect_seed_dataset
+    print(f"\n=== {task}: collect_seed_dataset({n_episodes} eps) ===", flush=True)
+    env = MetaworldVisualEnv(task_name=task, seed=0)
+    t0 = time.time()
+    trajs = collect_seed_dataset(env=env, n_episodes=n_episodes,
+                                 scripted_fraction=0.7, scripted_noise=0.3, seed=0)
+    print(f"  collected {len(trajs)} trajs in {time.time()-t0:.1f}s", flush=True)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--tasks", nargs="+", default=["push-v3", "coffee-push-v3"])
     p.add_argument("--n_steps", type=int, default=50)
+    p.add_argument("--collect_episodes", type=int, default=0,
+                   help="If >0, also time collect_seed_dataset for this many episodes.")
     args = p.parse_args()
     for task in args.tasks:
         try:
             probe(task, args.n_steps)
+            if args.collect_episodes > 0:
+                probe_collection(task, args.collect_episodes)
         except Exception as ex:
             import traceback; traceback.print_exc()
             print(f"{task}: PROBE FAILED {ex!r}", flush=True)

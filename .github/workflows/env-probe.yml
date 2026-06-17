@@ -15,6 +15,10 @@ on:
         description: "Steps to time per task"
         required: false
         default: "50"
+      collect_episodes:
+        description: "If >0, also time collect_seed_dataset for this many episodes"
+        required: false
+        default: "0"
       gpu:
         description: "GPU id"
         required: false
@@ -52,4 +56,5 @@ jobs:
           CUDA_VISIBLE_DEVICES="${{ inputs.gpu }}" MUJOCO_EGL_DEVICE_ID=0 \
             uv run python -u scripts/env_timing_probe.py \
               --tasks ${{ inputs.tasks }} \
-              --n_steps ${{ inputs.n_steps }}
+              --n_steps ${{ inputs.n_steps }} \
+              --collect_episodes ${{ inputs.collect_episodes }}
