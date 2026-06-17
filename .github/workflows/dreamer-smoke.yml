@@ -37,8 +37,19 @@ jobs:
           # requirements.txt has jax[cuda12]==0.4.33 + core deps, but NOT the
           # per-suite env packages. DMC needs dm_control (pulls mujoco).
           uv pip install --python .venv-dreamer -e .
-          uv pip install --python .venv-dreamer dm_control
-          .venv-dreamer/bin/python -c "import jax, dm_control; print('jax', jax.__version__, 'devices', jax.devices()); print('dm_control OK')"
+          # -U resolves a COHERENT dm_control+mujoco+numpy set. The numpy<2 pin
+          # in requirements.txt (only for DMLab/MineRL, unused here) otherwise
+          # caps mujoco to a version missing fields newer dm_control expects
+          # (the 'flex_bandwidth' AttributeError).
+          uv pip install --python .venv-dreamer -U dm_control
+          .venv-dreamer/bin/python - <<'PY'
+          import jax, numpy, mujoco
+          from dm_control import suite
+          print('jax', jax.__version__, 'devices', jax.devices())
+          print('mujoco', mujoco.__version__, 'numpy', numpy.__version__)
+          env = suite.load('walker', 'walk'); ts = env.reset()
+          print('dm_control DMC env load+reset OK; obs keys:', list(ts.observation.keys()))
+          PY
 
       - name: DMC proprio smoke (render-free)
         shell: bash -eo pipefail {0}
