@@ -37,11 +37,12 @@ jobs:
           # requirements.txt has jax[cuda12]==0.4.33 + core deps, but NOT the
           # per-suite env packages. DMC needs dm_control (pulls mujoco).
           uv pip install --python .venv-dreamer -e .
-          # -U resolves a COHERENT dm_control+mujoco+numpy set. The numpy<2 pin
-          # in requirements.txt (only for DMLab/MineRL, unused here) otherwise
-          # caps mujoco to a version missing fields newer dm_control expects
-          # (the 'flex_bandwidth' AttributeError).
-          uv pip install --python .venv-dreamer -U dm_control
+          # Pin a COHERENT dm_control+mujoco pair: dm_control's field schema must
+          # match mujoco's actual fields, else AttributeErrors like
+          # 'MjModel has no attribute flex_bandwidth' (latest mujoco 3.9 removed
+          # fields latest dm_control still references). 1.0.18 + 3.1.6 are a
+          # same-era, tested pair, numpy<2 compatible.
+          uv pip install --python .venv-dreamer "dm_control==1.0.18" "mujoco==3.1.6"
           .venv-dreamer/bin/python - <<'PY'
           import jax, numpy, mujoco
           from dm_control import suite
