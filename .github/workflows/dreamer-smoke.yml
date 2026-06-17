@@ -1,0 +1,83 @@
+name: dreamer-smoke
+
+# Feasibility gate for the DreamerV3 collapse port: set up the JAX env and run
+# a tiny render-free dmc_proprio job on the H20 machine. Validates the
+# jax[cuda12] / dm_control install + GPU before any collapse machinery is built.
+# Separate venv (dreamerv3/.venv-dreamer) — incompatible with the main torch env.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "DMC task (e.g. dmc_walker_walk, dmc_reacher_hard)"
+        required: false
+        default: "dmc_walker_walk"
+      steps:
+        description: "Env steps for the smoke"
+        required: false
+        default: "6000"
+      gpu:
+        description: "GPU id"
+        required: false
+        default: "0"
+
+jobs:
+  run:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up DreamerV3 JAX env
+        run: |
+          export UV_CACHE_DIR="$HOME/.cache/uv"
+          cd dreamerv3
+          uv venv .venv-dreamer --python 3.11
+          # Installs requirements.txt (jax[cuda12]==0.4.33, dm_control, ...) +
+          # the local dreamerv3/embodied packages (editable).
+          uv pip install --python .venv-dreamer -e .
+          .venv-dreamer/bin/python -c "import jax; print('jax', jax.__version__, 'devices', jax.devices())"
+
+      - name: DMC proprio smoke (render-free)
+        shell: bash -eo pipefail {0}
+        run: |
+          export PYTHONUNBUFFERED=1
+          export XLA_PYTHON_CLIENT_PREALLOCATE=false
+          # Defensive EGL (render-free path shouldn't need it, but harmless):
+          export MUJOCO_GL=egl
+          export PYOPENGL_PLATFORM=egl
+          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
+          if [ -n "$NVIDIA_PREFIX" ]; then
+            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
+            export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
+            unset __EGL_VENDOR_LIBRARY_DIRS
+          fi
+          OUT="$PWD/runs/dreamer-smoke"
+          rm -rf "$OUT"; mkdir -p "$OUT"
+          cd dreamerv3
+          CUDA_VISIBLE_DEVICES="${{ inputs.gpu }}" MUJOCO_EGL_DEVICE_ID=0 \
+            .venv-dreamer/bin/python -u dreamerv3/main.py \
+              --logdir "$OUT" \
+              --configs dmc_proprio debug \
+              --task "${{ inputs.task }}" \
+              --env.dmc.norender True \
+              --run.steps "${{ inputs.steps }}" \
+              2>&1 | tee "$OUT/train.log"
+
+      - name: Show metrics
+        if: always()
+        run: |
+          OUT="$PWD/runs/dreamer-smoke"
+          echo "=== last metrics lines (episode/score) ==="
+          grep -aiE 'score|episode|return' "$OUT/metrics.jsonl" 2>/dev/null | tail -10 || echo "(no metrics.jsonl)"
+
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dreamer-smoke
+          path: |
+            runs/dreamer-smoke/train.log
+            runs/dreamer-smoke/metrics.jsonl
+            runs/dreamer-smoke/config.yaml
