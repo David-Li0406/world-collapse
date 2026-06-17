@@ -34,10 +34,11 @@ jobs:
           export UV_CACHE_DIR="$HOME/.cache/uv"
           cd dreamerv3
           uv venv .venv-dreamer --python 3.11
-          # Installs requirements.txt (jax[cuda12]==0.4.33, dm_control, ...) +
-          # the local dreamerv3/embodied packages (editable).
+          # requirements.txt has jax[cuda12]==0.4.33 + core deps, but NOT the
+          # per-suite env packages. DMC needs dm_control (pulls mujoco).
           uv pip install --python .venv-dreamer -e .
-          .venv-dreamer/bin/python -c "import jax; print('jax', jax.__version__, 'devices', jax.devices())"
+          uv pip install --python .venv-dreamer dm_control
+          .venv-dreamer/bin/python -c "import jax, dm_control; print('jax', jax.__version__, 'devices', jax.devices()); print('dm_control OK')"
 
       - name: DMC proprio smoke (render-free)
         shell: bash -eo pipefail {0}
