@@ -1,0 +1,55 @@
+name: env-probe
+
+# Fast per-step timing probe (physics vs render) for one or more Meta-world
+# tasks. Bounded + short — used to diagnose whether coffee-push-v3 is a true
+# hang or just slow, without a 40-min blind probe-bank build.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: "Space-separated tasks (e.g. 'push-v3 coffee-push-v3')"
+        required: false
+        default: "push-v3 coffee-push-v3"
+      n_steps:
+        description: "Steps to time per task"
+        required: false
+        default: "50"
+      gpu:
+        description: "GPU id"
+        required: false
+        default: "0"
+
+jobs:
+  run:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup uv environment
+        run: |
+          export UV_CACHE_DIR="$HOME/.cache/uv"
+          uv sync --frozen
+
+      - name: Timing probe
+        shell: bash -eo pipefail {0}
+        run: |
+          export MUJOCO_GL=egl
+          export PYOPENGL_PLATFORM=egl
+          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
+          if [ -n "$NVIDIA_PREFIX" ]; then
+            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
+            export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
+            unset __EGL_VENDOR_LIBRARY_DIRS
+          fi
+          export PYTHONUNBUFFERED=1
+          export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
+          export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
+          CUDA_VISIBLE_DEVICES="${{ inputs.gpu }}" MUJOCO_EGL_DEVICE_ID=0 \
+            uv run python -u scripts/env_timing_probe.py \
+              --tasks ${{ inputs.tasks }} \
+              --n_steps ${{ inputs.n_steps }}
