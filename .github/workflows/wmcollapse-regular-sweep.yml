@@ -131,7 +131,7 @@ jobs:
             echo "[wmc-regular] seed=${seed} task=${{ inputs.task }} on GPU ${GPU} -> ${OUT}"
             ( cd "$IVIDEOGPT_ROOT/mbrl" && \
               CUDA_VISIBLE_DEVICES="${GPU}" MUJOCO_EGL_DEVICE_ID=0 EGL_DEVICE_ID=0 \
-              "$VENV" -u train_metaworld_mbpo.py \
+              "$VENV" -u "$GITHUB_WORKSPACE/scripts/run_regular_mbpo.py" \
                 "task@_global_=${{ inputs.task }}" \
                 seed=${seed} \
                 num_train_frames=${{ inputs.num_train_frames }} \
