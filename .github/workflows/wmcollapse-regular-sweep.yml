@@ -1,0 +1,165 @@
+name: wmcollapse-regular-sweep
+
+# Reproduce the REGULAR (upstream) iVideoGPT MBPO wm-policy training to measure
+# per-seed variance. Runs the genuine iVideoGPT/mbrl/train_metaworld_mbpo.py
+# (byte-identical to wmcollapse round-0 / upstream d601d5c) in a SEPARATE venv
+# that replicates wmcollapse's pinned env (metaworld v2 @ d155d00 + transformers
+# 4.38.2 + diffusers 0.27.0). NO collapse modifications — pure regular training.
+# Per-seed eval SR is logged by the upstream script to <out>/eval.csv.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_name:
+        description: "Run name prefix"
+        required: true
+        default: "wmc-regular"
+      task:
+        description: "Meta-world v2 task (e.g. button_press_topdown_wall)"
+        required: false
+        default: "button_press_topdown_wall"
+      seeds:
+        description: "Comma list of seeds"
+        required: true
+        default: "1,2,3,4,5"
+      num_train_frames:
+        description: "Env-frame budget"
+        required: false
+        default: "260002"
+      num_eval_episodes:
+        description: "Eval episodes per eval point"
+        required: false
+        default: "20"
+      eval_every_frames:
+        description: "Eval cadence (frames)"
+        required: false
+        default: "20000"
+      gpus:
+        description: "Space-separated GPU ids (round-robin over seeds)"
+        required: false
+        default: "0 1 2 3 4"
+
+jobs:
+  run:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 1440
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show machine info
+        run: |
+          hostname
+          nvidia-smi -L || true
+
+      - name: Set up wmcollapse (metaworld v2) venv
+        run: |
+          export UV_CACHE_DIR="$HOME/.cache/uv"
+          # Separate venv: replicates wmcollapse's pins. metaworld v2 @ d155d00
+          # provides ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE that the upstream MBPO
+          # script needs (our Metaworld submodule is v3 and lacks it).
+          uv venv .venv-wmc --python 3.10
+          uv pip install --python .venv-wmc \
+            torch torchvision \
+            transformers==4.38.2 diffusers==0.27.0 accelerate "huggingface_hub<0.25" \
+            "numpy<2.0" einops safetensors \
+            gym==0.26.2 dm-env \
+            "metaworld @ git+https://github.com/Farama-Foundation/Metaworld.git@d155d0051630bb365ea6a824e02c66c068947439" \
+            hydra-core omegaconf opencv-python-headless termcolor tensorboard imageio tqdm
+          .venv-wmc/bin/python - <<'PY'
+          import torch, metaworld
+          from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE as A
+          import mujoco
+          print('torch', torch.__version__, 'cuda', torch.cuda.is_available())
+          print('mujoco', mujoco.__version__)
+          print('button_press_topdown_wall present:',
+                'button-press-topdown-wall-v2-goal-observable' in A)
+          PY
+
+      - name: Stage iVideoGPT pretrained models
+        run: |
+          export HF_HOME="$HOME/hf_cache"
+          DEST="iVideoGPT/pretrained_models/ivideogpt-oxe-64-act-free"
+          if [ ! -f "$DEST/tokenizer/diffusion_pytorch_model.safetensors" ] || \
+             [ ! -f "$DEST/transformer/model.safetensors" ]; then
+            mkdir -p "$DEST"
+            .venv-wmc/bin/python -c "
+          from huggingface_hub import snapshot_download
+          snapshot_download(repo_id='thuml/ivideogpt-oxe-64-act-free', local_dir='$DEST', local_dir_use_symlinks=True)
+          "
+          fi
+
+      - name: Pre-stage LPIPS vgg.pth
+        run: |
+          export PYTHONPATH="iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
+          export HF_HOME="$HOME/hf_cache"
+          .venv-wmc/bin/python -c "from ivideogpt.vq_model.lpips import LPIPS; LPIPS()" || true
+
+      - name: Regular MBPO sweep fanout
+        shell: bash -eo pipefail {0}
+        run: |
+          export HF_HOME="$HOME/hf_cache"
+          export TRANSFORMERS_CACHE="$HOME/hf_cache/transformers"
+          export MUJOCO_GL=egl
+          export PYOPENGL_PLATFORM=egl
+          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
+          if [ -n "$NVIDIA_PREFIX" ]; then
+            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
+            export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
+            unset __EGL_VENDOR_LIBRARY_DIRS
+          fi
+          export PYTHONUNBUFFERED=1
+          export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
+          export PYTHONPATH="$PWD/iVideoGPT/mbrl:$PWD/iVideoGPT:${PYTHONPATH:-}"
+          VENV="$PWD/.venv-wmc/bin/python"
+          WM="$IVIDEOGPT_ROOT/pretrained_models/ivideogpt-oxe-64-act-free"
+
+          IFS=',' read -ra SEEDS <<< "${{ inputs.seeds }}"
+          GPUS=(${{ inputs.gpus }})
+          PIDS=()
+          IDX=0
+          for seed in "${SEEDS[@]}"; do
+            GPU="${GPUS[$(( IDX % ${#GPUS[@]} ))]}"; IDX=$((IDX+1))
+            OUT="$PWD/runs/${{ inputs.run_name }}/seed${seed}"
+            mkdir -p "$OUT"
+            echo "[wmc-regular] seed=${seed} task=${{ inputs.task }} on GPU ${GPU} -> ${OUT}"
+            ( cd "$IVIDEOGPT_ROOT/mbrl" && \
+              CUDA_VISIBLE_DEVICES="${GPU}" MUJOCO_EGL_DEVICE_ID=0 EGL_DEVICE_ID=0 \
+              "$VENV" -u train_metaworld_mbpo.py \
+                "task@_global_=${{ inputs.task }}" \
+                seed=${seed} \
+                num_train_frames=${{ inputs.num_train_frames }} \
+                num_eval_episodes=${{ inputs.num_eval_episodes }} \
+                eval_every_frames=${{ inputs.eval_every_frames }} \
+                demo=false \
+                world_model.config_name="$IVIDEOGPT_ROOT/configs/llama/config.json" \
+                world_model.pretrained_model_name_or_path="$WM/tokenizer" \
+                world_model.pretrained_transformer_path="$WM/transformer" \
+                "hydra.run.dir=$OUT" \
+                > "$OUT/train.log" 2>&1 ) &
+            PIDS+=($!)
+          done
+          echo "[wmc-regular] launched ${#PIDS[@]} jobs; waiting..."
+          FAIL=0
+          for pid in "${PIDS[@]}"; do wait "$pid" || FAIL=$((FAIL+1)); done
+          echo "[wmc-regular] done. failures: $FAIL"
+          if [ "$FAIL" -gt 0 ]; then exit 1; fi
+
+      - name: Show eval SR per seed
+        if: always()
+        run: |
+          for f in runs/${{ inputs.run_name }}/seed*/eval.csv; do
+            echo "=== $f ==="; tail -5 "$f" 2>/dev/null || echo "(no eval.csv)"
+          done
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.run_name }}
+          path: |
+            runs/${{ inputs.run_name }}/**/eval.csv
+            runs/${{ inputs.run_name }}/**/train.csv
+            runs/${{ inputs.run_name }}/**/train.log
