@@ -113,9 +113,15 @@ def _patched_rollout(self, obs, policy, horizon):
 VideoPredictor.__init__ = _patched_init
 VideoPredictor.rollout = _patched_rollout
 
-# Run the upstream hydra main (reads sys.argv). config_path='cfgs' resolves
-# relative to train_metaworld_mbpo.py regardless of this wrapper's location.
-import train_metaworld_mbpo  # noqa: E402
+# Run the upstream script AS __main__ via runpy (not import+call): hydra's
+# @hydra.main(config_path='cfgs') only resolves 'cfgs' as a filesystem dir when
+# __name__=='__main__'; importing it makes hydra look for a 'cfgs' package and
+# fail. The VideoPredictor patch above persists through sys.modules, so the
+# runpy'd script picks up the FP32 class. cwd is iVideoGPT/mbrl (set by the
+# caller), where train_metaworld_mbpo.py + cfgs/ live.
+import os  # noqa: E402
+import runpy  # noqa: E402
 
 if __name__ == "__main__":
-    train_metaworld_mbpo.main()
+    script = os.path.join(os.getcwd(), "train_metaworld_mbpo.py")
+    runpy.run_path(script, run_name="__main__")
