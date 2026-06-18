@@ -61,13 +61,17 @@ jobs:
           # provides ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE that the upstream MBPO
           # script needs (our Metaworld submodule is v3 and lacks it).
           uv venv .venv-wmc --python 3.10
+          # torch from cu121 index (matches our working main env; unpinned pulls
+          # a cu130/CUDA-13 wheel that the H20's CUDA-12 driver can't use ->
+          # torch.cuda.is_available()==False).
+          uv pip install --python .venv-wmc --index-url https://download.pytorch.org/whl/cu121 \
+            torch==2.5.1 torchvision==0.20.1
           uv pip install --python .venv-wmc \
-            torch torchvision \
             transformers==4.38.2 diffusers==0.27.0 accelerate "huggingface_hub<0.25" \
             "numpy<2.0" einops safetensors \
             gym==0.26.2 dm-env \
             "metaworld @ git+https://github.com/Farama-Foundation/Metaworld.git@d155d0051630bb365ea6a824e02c66c068947439" \
-            hydra-core omegaconf opencv-python-headless termcolor tensorboard imageio tqdm
+            hydra-core hydra-submitit-launcher omegaconf opencv-python-headless termcolor tensorboard imageio tqdm
           .venv-wmc/bin/python - <<'PY'
           import torch, metaworld
           from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE as A
