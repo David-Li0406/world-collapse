@@ -34,6 +34,10 @@ on:
         description: "Eval cadence (frames)"
         required: false
         default: "20000"
+      goal_bias_fraction:
+        description: "Empty=regular full-distribution training. Set (e.g. 0.5) to enable our goal-bias A/B setting: collect in region A, eval SR_A vs held-out SR_B."
+        required: false
+        default: ""
       gpus:
         description: "Space-separated GPU ids (round-robin over seeds)"
         required: false
@@ -131,6 +135,7 @@ jobs:
             echo "[wmc-regular] seed=${seed} task=${{ inputs.task }} on GPU ${GPU} -> ${OUT}"
             ( cd "$IVIDEOGPT_ROOT/mbrl" && \
               CUDA_VISIBLE_DEVICES="${GPU}" MUJOCO_EGL_DEVICE_ID=0 EGL_DEVICE_ID=0 \
+              WMC_GOAL_BIAS_FRACTION="${{ inputs.goal_bias_fraction }}" WMC_OUT="$OUT" \
               "$VENV" -u "$GITHUB_WORKSPACE/scripts/run_regular_mbpo.py" \
                 "task@_global_=${{ inputs.task }}" \
                 seed=${seed} \

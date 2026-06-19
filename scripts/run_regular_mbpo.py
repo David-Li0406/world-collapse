@@ -113,15 +113,96 @@ def _patched_rollout(self, obs, policy, horizon):
 VideoPredictor.__init__ = _patched_init
 VideoPredictor.rollout = _patched_rollout
 
-# Run the upstream script AS __main__ via runpy (not import+call): hydra's
-# @hydra.main(config_path='cfgs') only resolves 'cfgs' as a filesystem dir when
-# __name__=='__main__'; importing it makes hydra look for a 'cfgs' package and
-# fail. The VideoPredictor patch above persists through sys.modules, so the
-# runpy'd script picks up the FP32 class. cwd is iVideoGPT/mbrl (set by the
-# caller), where train_metaworld_mbpo.py + cfgs/ live.
 import os  # noqa: E402
+import sys  # noqa: E402
 import runpy  # noqa: E402
 
+# ---------------------------------------------------------------------------
+# Optional "our wm-policy setting": goal-bias trained/held-out (A/B) split.
+# Enabled by WMC_GOAL_BIAS_FRACTION (e.g. 0.5). Data collection is restricted to
+# region A (rand_vec dim-0 lower fraction); eval reports SR_A (trained) and SR_B
+# (held-out upper region). Minimal runtime patch — upstream files untouched.
+# ---------------------------------------------------------------------------
+_BIAS = os.environ.get("WMC_GOAL_BIAS_FRACTION", "").strip()
+
+
+def _run_biased():
+    import numpy as np
+    import torch
+    import drq_utils
+    import metaworld_env
+    from metaworld_env import MetaWorld
+    import train_metaworld_mbpo as T
+    from hydra import compose, initialize_config_dir
+
+    frac = float(_BIAS)
+    region = {"mode": "A"}          # training collects in region A
+    printed = {"done": False}
+    _orig_reset = MetaWorld.reset
+
+    def _biased_reset(self):
+        m = region["mode"]
+        if m in ("A", "B"):
+            rs = self._env._random_reset_space
+            lo = np.asarray(rs.low, dtype=np.float64)
+            hi = np.asarray(rs.high, dtype=np.float64)
+            rv = np.random.uniform(lo, hi)
+            split = lo[0] + frac * (hi[0] - lo[0])
+            rv[0] = (np.random.uniform(lo[0], split) if m == "A"
+                     else np.random.uniform(split, hi[0]))
+            self._env._freeze_rand_vec = True
+            self._env._last_rand_vec = rv.astype(np.float32)
+            if not printed["done"]:
+                print(f"[goal-bias] rand_vec dim0=[{lo[0]:.3f},{hi[0]:.3f}] "
+                      f"split@{split:.3f} frac={frac}  A=lower, B=upper", flush=True)
+                printed["done"] = True
+        return _orig_reset(self)
+
+    MetaWorld.reset = _biased_reset
+
+    def _ab_eval(self):
+        # Evaluate trained region A and held-out region B; print SR for each so
+        # it lands in train.log (the reliable channel). Restore A for training.
+        for reg in ("A", "B"):
+            region["mode"] = reg
+            episode = 0
+            total_success = 0
+            until = drq_utils.Until(self.cfg.num_eval_episodes, bar_name=f"eval_{reg}")
+            while until(episode):
+                ts = self.eval_env.reset()
+                ep_succ = 0
+                while not ts.last():
+                    with torch.no_grad(), drq_utils.eval_mode(self.agent):
+                        action = self.agent.act(ts.observation, self.global_step,
+                                                eval_mode=True)
+                    ts = self.eval_env.step(action)
+                    ep_succ += ts.success
+                total_success += float(ep_succ >= 1.0)
+                episode += 1
+            sr = total_success / episode
+            print(f"[ab-eval] | eval | F: {self.global_frame} | "
+                  f"SS_{reg}: {sr:.4f}", flush=True)
+        region["mode"] = "A"
+
+    T.Workspace.eval = _ab_eval
+
+    # Manual hydra compose (we drop hydra.* overrides; output dir via WMC_OUT).
+    out = os.environ["WMC_OUT"]
+    os.makedirs(out, exist_ok=True)
+    cfgs_dir = os.path.join(os.path.dirname(os.path.abspath(T.__file__)), "cfgs")
+    overrides = [a for a in sys.argv[1:] if not a.startswith("hydra.")]
+    with initialize_config_dir(version_base=None, config_dir=cfgs_dir):
+        cfg = compose(config_name="mbpo_config", overrides=overrides)
+    os.chdir(out)  # Workspace uses Path.cwd() as work_dir (logs/eval here)
+    ws = T.Workspace(cfg)
+    ws.train()
+
+
 if __name__ == "__main__":
-    script = os.path.join(os.getcwd(), "train_metaworld_mbpo.py")
-    runpy.run_path(script, run_name="__main__")
+    if _BIAS:
+        _run_biased()
+    else:
+        # Regular training: run upstream AS __main__ via runpy (hydra's
+        # config_path='cfgs' only resolves as a dir under __main__).
+        script = os.path.join(os.getcwd(), "train_metaworld_mbpo.py")
+        runpy.run_path(script, run_name="__main__")
