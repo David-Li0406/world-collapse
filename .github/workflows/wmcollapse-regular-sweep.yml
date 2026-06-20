@@ -38,6 +38,10 @@ on:
         description: "Empty=regular full-distribution training. Set (e.g. 0.5) to enable our goal-bias A/B setting: collect in region A, eval SR_A vs held-out SR_B."
         required: false
         default: ""
+      wm_recent_window:
+        description: "Empty=full WM replay. Set (e.g. 5000) to enable collapse_prone recency-WM: WM trains only on the last N transitions."
+        required: false
+        default: ""
       gpus:
         description: "Space-separated GPU ids (round-robin over seeds)"
         required: false
@@ -136,6 +140,7 @@ jobs:
             ( cd "$IVIDEOGPT_ROOT/mbrl" && \
               CUDA_VISIBLE_DEVICES="${GPU}" MUJOCO_EGL_DEVICE_ID=0 EGL_DEVICE_ID=0 \
               WMC_GOAL_BIAS_FRACTION="${{ inputs.goal_bias_fraction }}" WMC_OUT="$OUT" \
+              WMC_WM_RECENT_WINDOW="${{ inputs.wm_recent_window }}" \
               "$VENV" -u "$GITHUB_WORKSPACE/scripts/run_regular_mbpo.py" \
                 "task@_global_=${{ inputs.task }}" \
                 seed=${seed} \

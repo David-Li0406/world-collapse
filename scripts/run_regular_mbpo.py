@@ -118,6 +118,37 @@ import sys  # noqa: E402
 import runpy  # noqa: E402
 
 # ---------------------------------------------------------------------------
+# Optional collapse_prone recency-WM: restrict the world model's segment sampler
+# to the most recent WMC_WM_RECENT_WINDOW transitions, so the WM forgets older
+# data (incl. held-out region B) — the variance/collapse driver. Patches ONLY
+# ReplaySegmentBuffer (the WM loader); the policy's replay stays full. Class-
+# level patch persists through sys.modules into both the runpy and import paths.
+# ---------------------------------------------------------------------------
+_RECENT = os.environ.get("WMC_WM_RECENT_WINDOW", "").strip()
+if _RECENT:
+    import random as _random
+    from replay_buffer import ReplaySegmentBuffer, episode_len as _eplen
+    _W = int(_RECENT)
+    _rp = {"done": False}
+
+    def _recent_sample_episode(self):
+        fns = self._episode_fns
+        chosen, total = [], 0
+        for fn in reversed(fns):           # _episode_fns is chronological
+            chosen.append(fn)
+            total += _eplen(self._episodes[fn])
+            if total >= _W:
+                break
+        if not _rp["done"]:
+            print(f"[recency-wm] WM trains on last {len(chosen)} eps "
+                  f"(~{total} transitions, window={_W}); total stored={len(fns)}",
+                  flush=True)
+            _rp["done"] = True
+        return self._episodes[_random.choice(chosen)]
+
+    ReplaySegmentBuffer._sample_episode = _recent_sample_episode
+
+# ---------------------------------------------------------------------------
 # Optional "our wm-policy setting": goal-bias trained/held-out (A/B) split.
 # Enabled by WMC_GOAL_BIAS_FRACTION (e.g. 0.5). Data collection is restricted to
 # region A (rand_vec dim-0 lower fraction); eval reports SR_A (trained) and SR_B
