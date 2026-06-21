@@ -89,6 +89,10 @@ jobs:
             gym==0.26.2 dm-env \
             "metaworld @ git+https://github.com/Farama-Foundation/Metaworld.git@d155d0051630bb365ea6a824e02c66c068947439" \
             hydra-core hydra-submitit-launcher omegaconf opencv-python-headless termcolor tensorboard imageio tqdm
+          # Pin mujoco to the metaworld-v2 era: latest (3.9) hangs push-v2's
+          # physics/render (button_press-v2 happened to work). 2.3.7 is the
+          # version metaworld @ d155d00 (2023) was built against.
+          uv pip install --python .venv-wmc "mujoco==2.3.7"
           .venv-wmc/bin/python - <<'PY'
           import torch, metaworld
           from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE as A
