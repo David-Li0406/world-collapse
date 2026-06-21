@@ -62,6 +62,15 @@ jobs:
           hostname
           nvidia-smi -L || true
 
+      - name: Stage extra task configs
+        run: |
+          # Add task configs not present in the iVideoGPT submodule (e.g. push).
+          # Stored in the parent repo so the runner gets them (can't edit the
+          # submodule's cfgs/task in place).
+          if ls scripts/wmc_tasks/*.yaml >/dev/null 2>&1; then
+            cp -v scripts/wmc_tasks/*.yaml iVideoGPT/mbrl/cfgs/task/
+          fi
+
       - name: Set up wmcollapse (metaworld v2) venv
         run: |
           export UV_CACHE_DIR="$HOME/.cache/uv"
