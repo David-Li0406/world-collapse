@@ -42,6 +42,13 @@ jobs:
         run: |
           hostname
           nvidia-smi -L || true
+          echo "[diag] whoami=$(whoami)  HOME=$HOME"
+          echo "[diag] PATH=$PATH"
+          echo "[diag] which uv: $(command -v uv 2>/dev/null || echo MISSING)"
+          echo "[diag] uv search:"
+          find "$HOME" /usr/local/bin /opt -maxdepth 4 -name uv -type f 2>/dev/null | head -10 || true
+          echo "[diag] python/pipx: $(command -v python3 2>/dev/null) $(command -v pipx 2>/dev/null)"
+          ls -la "$HOME/.local/bin" 2>/dev/null | head -20 || echo "[diag] no ~/.local/bin"
 
       - name: Setup uv environment
         run: |
