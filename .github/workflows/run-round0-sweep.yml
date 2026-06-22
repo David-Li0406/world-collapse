@@ -61,7 +61,12 @@ jobs:
             UV_BIN=$(ls "$HOME"/.local/bin/uv "$HOME"/.cargo/bin/uv /usr/local/bin/uv /opt/uv/uv 2>/dev/null | head -1)
             if [ -n "$UV_BIN" ]; then export PATH="$(dirname "$UV_BIN"):$PATH"; echo "[setup] found uv at $UV_BIN"; fi
           fi
-          command -v uv || { echo "[setup] ERROR: uv not found on Machine B"; exit 127; }
+          if ! command -v uv >/dev/null 2>&1; then
+            echo "[setup] uv not installed on Machine B; installing via official installer..."
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+          command -v uv || { echo "[setup] ERROR: uv unavailable after install attempt"; exit 127; }
           uv --version
           uv sync --frozen
 
