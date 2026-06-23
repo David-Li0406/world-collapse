@@ -29,9 +29,12 @@ print(f"[diag] python torch={torch.__version__}  cuda_available={torch.cuda.is_a
 if torch.cuda.is_available():
     print(f"[diag] device0={torch.cuda.get_device_name(0)}", flush=True)
 
-# GPU vs CPU compute speed (a CPU-only env shows up here).
+# GPU vs CPU compute speed (a CPU-only env shows up here). Warm up first so the
+# GPU number isn't dominated by one-time CUDA/cuBLAS init.
 for dev in (["cuda", "cpu"] if torch.cuda.is_available() else ["cpu"]):
     x = torch.randn(2048, 2048, device=dev)
+    for _ in range(3):  # warmup
+        y = x @ x
     if dev == "cuda":
         torch.cuda.synchronize()
     t = time.time()
@@ -64,7 +67,7 @@ try:
     print(f"[diag] env.reset+first-render: {(time.time()-t):.2f}s", flush=True)
     a = np.zeros(env.action_spec().shape, np.float32)
     t = time.time()
-    N = 30
+    N = 8
     for _ in range(N):
         env.step(a)
     print(f"[diag] env.step (phys+render) mean: {(time.time()-t)/N*1000:.1f} ms/step "

@@ -10,6 +10,10 @@ on:
         description: "GPU id"
         required: false
         default: "0"
+      python_version:
+        description: "Pin uv to this Python (e.g. 3.11 = pre-reset known-good). Empty = uv default."
+        required: false
+        default: ""
 
 jobs:
   run:
@@ -30,8 +34,10 @@ jobs:
             export PATH="$HOME/.local/bin:$PATH"
           fi
           uv --version
-          uv sync --frozen
-          echo "[diag] venv python: $(uv run python -c 'import sys;print(sys.version)')"
+          PYARG=""
+          if [ -n "${{ inputs.python_version }}" ]; then PYARG="--python ${{ inputs.python_version }}"; fi
+          uv sync --frozen $PYARG
+          echo "[diag] venv python: $(uv run $PYARG python -c 'import sys;print(sys.version)')"
 
       - name: Run diagnostic
         shell: bash -eo pipefail {0}
@@ -49,5 +55,7 @@ jobs:
           export PYTHONUNBUFFERED=1
           export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
           export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
+          PYARG=""
+          if [ -n "${{ inputs.python_version }}" ]; then PYARG="--python ${{ inputs.python_version }}"; fi
           CUDA_VISIBLE_DEVICES="${{ inputs.gpu }}" MUJOCO_EGL_DEVICE_ID=0 \
-            uv run python -u scripts/main_env_diag.py
+            uv run $PYARG python -u scripts/main_env_diag.py
