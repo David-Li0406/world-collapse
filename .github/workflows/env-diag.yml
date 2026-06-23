@@ -1,0 +1,53 @@
+name: env-diag
+
+# Diagnose the main-env slowdown after the machine reset: torch CUDA, GPU vs CPU
+# compute, package versions (missing?), and push-v3 per-step render timing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      gpu:
+        description: "GPU id"
+        required: false
+        default: "0"
+
+jobs:
+  run:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup uv environment
+        run: |
+          export UV_CACHE_DIR="$HOME/.cache/uv"
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/bin:$PATH"
+          if ! command -v uv >/dev/null 2>&1; then
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+          uv --version
+          uv sync --frozen
+          echo "[diag] venv python: $(uv run python -c 'import sys;print(sys.version)')"
+
+      - name: Run diagnostic
+        shell: bash -eo pipefail {0}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          export HF_HOME="$HOME/hf_cache"
+          export MUJOCO_GL=egl
+          export PYOPENGL_PLATFORM=egl
+          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
+          if [ -n "$NVIDIA_PREFIX" ]; then
+            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
+            export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
+            unset __EGL_VENDOR_LIBRARY_DIRS
+          fi
+          export PYTHONUNBUFFERED=1
+          export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
+          export IVIDEOGPT_ROOT="$PWD/iVideoGPT"
+          CUDA_VISIBLE_DEVICES="${{ inputs.gpu }}" MUJOCO_EGL_DEVICE_ID=0 \
+            uv run python -u scripts/main_env_diag.py
