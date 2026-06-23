@@ -57,6 +57,18 @@ for pkg in ["torch", "torchvision", "mujoco", "transformers", "diffusers",
 import mujoco
 print(f"[diag] mujoco runtime={mujoco.__version__}", flush=True)
 
+# Which GL device does MuJoCo's EGL context actually render on?
+# 'llvmpipe'/'softpipe'/'Mesa' => SOFTWARE fallback (the slowdown); 'NVIDIA' => hardware.
+try:
+    _ctx = mujoco.GLContext(64, 64)
+    _ctx.make_current()
+    from OpenGL import GL
+    print(f"[diag] GL_VENDOR={GL.glGetString(GL.GL_VENDOR)}", flush=True)
+    print(f"[diag] GL_RENDERER={GL.glGetString(GL.GL_RENDERER)}", flush=True)
+    print(f"[diag] GL_VERSION={GL.glGetString(GL.GL_VERSION)}", flush=True)
+except Exception as e:
+    print(f"[diag] GL renderer query failed: {e!r}", flush=True)
+
 # push-v3 env per-step (physics + render) timing — slow => software render.
 try:
     from wcollapse.envs.metaworld_dmenv import make
