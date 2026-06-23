@@ -39,6 +39,13 @@ jobs:
           uv sync --frozen $PYARG
           echo "[diag] venv python: $(uv run $PYARG python -c 'import sys;print(sys.version)')"
 
+      - name: GPU state (clocks / throttle / MIG / persistence)
+        run: |
+          echo "=== persistence + MIG ==="
+          nvidia-smi --query-gpu=index,name,persistence_mode,mig.mode.current,clocks.sm,clocks.max.sm,clocks_throttle_reasons.active,utilization.gpu,power.draw,power.limit --format=csv 2>&1 | head -12 || true
+          echo "=== throttle reasons (GPU 0) ==="
+          nvidia-smi -q -i 0 -d PERFORMANCE 2>&1 | grep -iE 'clocks throttle|idle|applic|sw power|hw |sw therm|hw therm|sync boost' | head -20 || true
+
       - name: Run diagnostic
         shell: bash -eo pipefail {0}
         run: |
