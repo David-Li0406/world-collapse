@@ -46,6 +46,27 @@ jobs:
           echo "=== throttle reasons (GPU 0) ==="
           nvidia-smi -q -i 0 -d PERFORMANCE 2>&1 | grep -iE 'clocks throttle|idle|applic|sw power|hw |sw therm|hw therm|sync boost' | head -20 || true
 
+      - name: EGL per-device render benchmark
+        shell: bash -eo pipefail {0}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          export HF_HOME="$HOME/hf_cache"
+          export MUJOCO_GL=egl
+          export PYOPENGL_PLATFORM=egl
+          NVIDIA_PREFIX=$(ls -d /opt/nvidia-* 2>/dev/null | head -1)
+          if [ -n "$NVIDIA_PREFIX" ]; then
+            export LD_LIBRARY_PATH="${NVIDIA_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}"
+            export __EGL_VENDOR_LIBRARY_FILENAMES="${NVIDIA_PREFIX}/egl_vendor.d/10_nvidia.json"
+            unset __EGL_VENDOR_LIBRARY_DIRS
+          fi
+          export PYTHONUNBUFFERED=1
+          export PYTHONPATH="src:iVideoGPT/mbrl:iVideoGPT:${PYTHONPATH:-}"
+          # NOTE: no CUDA_VISIBLE_DEVICES restriction here, so the probe can see
+          # all EGL devices and benchmark each physical GPU's render speed.
+          PYARG=""
+          if [ -n "${{ inputs.python_version }}" ]; then PYARG="--python ${{ inputs.python_version }}"; fi
+          uv run $PYARG python -u scripts/egl_device_bench.py || true
+
       - name: Run diagnostic
         shell: bash -eo pipefail {0}
         run: |
