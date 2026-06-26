@@ -46,8 +46,10 @@ jobs:
             # --no-deps + --reinstall to bypass the editable project's mujoco==3.3.0 pin.
             uv pip install --no-deps --reinstall "mujoco==${{ inputs.mujoco_version }}"
           fi
-          echo "[diag] venv python: $(uv run $PYARG python -c 'import sys;print(sys.version)')"
-          echo "[diag] mujoco: $(uv run $PYARG python -c 'import mujoco;print(mujoco.__version__)')"
+          # Use the venv python DIRECTLY (not 'uv run', which re-syncs to uv.lock
+          # and would revert the mujoco override above).
+          echo "[diag] venv python: $(.venv/bin/python -c 'import sys;print(sys.version)')"
+          echo "[diag] mujoco: $(.venv/bin/python -c 'import mujoco;print(mujoco.__version__)')"
 
       - name: GPU state (clocks / throttle / MIG / persistence)
         run: |
@@ -75,7 +77,7 @@ jobs:
           # all EGL devices and benchmark each physical GPU's render speed.
           PYARG=""
           if [ -n "${{ inputs.python_version }}" ]; then PYARG="--python ${{ inputs.python_version }}"; fi
-          uv run $PYARG python -u scripts/egl_device_bench.py || true
+          .venv/bin/python -u scripts/egl_device_bench.py || true
 
       - name: Run diagnostic
         shell: bash -eo pipefail {0}
@@ -96,4 +98,4 @@ jobs:
           PYARG=""
           if [ -n "${{ inputs.python_version }}" ]; then PYARG="--python ${{ inputs.python_version }}"; fi
           CUDA_VISIBLE_DEVICES="${{ inputs.gpu }}" MUJOCO_EGL_DEVICE_ID=0 \
-            uv run $PYARG python -u scripts/main_env_diag.py
+            .venv/bin/python -u scripts/main_env_diag.py
