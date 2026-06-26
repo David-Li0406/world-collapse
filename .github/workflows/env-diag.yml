@@ -43,8 +43,11 @@ jobs:
           uv sync --frozen $PYARG
           if [ -n "${{ inputs.mujoco_version }}" ]; then
             echo "[diag] overriding mujoco -> ${{ inputs.mujoco_version }}"
-            # --no-deps + --reinstall to bypass the editable project's mujoco==3.3.0 pin.
-            uv pip install --no-deps --reinstall "mujoco==${{ inputs.mujoco_version }}"
+            # Target the project venv EXPLICITLY (--python .venv/...): otherwise
+            # uv pip install doesn't land in .venv. --no-deps+--reinstall bypass
+            # the editable project's mujoco==3.3.0 pin.
+            VENV_PY="$PWD/.venv/bin/python"
+            uv pip install --python "$VENV_PY" --no-deps --reinstall "mujoco==${{ inputs.mujoco_version }}"
           fi
           # Use the venv python DIRECTLY (not 'uv run', which re-syncs to uv.lock
           # and would revert the mujoco override above).
