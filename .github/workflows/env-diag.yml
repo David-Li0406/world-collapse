@@ -54,12 +54,12 @@ jobs:
           echo "[diag] venv python: $(.venv/bin/python -c 'import sys;print(sys.version)')"
           echo "[diag] mujoco: $(.venv/bin/python -c 'import mujoco;print(mujoco.__version__)')"
 
-      - name: GPU state (clocks / throttle / MIG / persistence)
+      - name: GPU state (util / power / clocks)
         run: |
-          echo "=== persistence + MIG ==="
-          nvidia-smi --query-gpu=index,name,persistence_mode,mig.mode.current,clocks.sm,clocks.max.sm,clocks_throttle_reasons.active,utilization.gpu,power.draw,power.limit --format=csv 2>&1 | head -12 || true
-          echo "=== throttle reasons (GPU 0) ==="
-          nvidia-smi -q -i 0 -d PERFORMANCE 2>&1 | grep -iE 'clocks throttle|idle|applic|sw power|hw |sw therm|hw therm|sync boost' | head -20 || true
+          echo "=== per-GPU util/power (valid fields) ==="
+          nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,power.draw,power.limit,clocks.current.sm,clocks_event_reasons.active --format=csv 2>&1 | head -12 || true
+          echo "=== plain nvidia-smi (fallback) ==="
+          nvidia-smi 2>&1 | head -25 || true
 
       - name: EGL per-device render benchmark
         shell: bash -eo pipefail {0}
