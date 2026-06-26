@@ -14,6 +14,10 @@ on:
         description: "Pin uv to this Python (e.g. 3.11 = pre-reset known-good). Empty = uv default."
         required: false
         default: ""
+      mujoco_version:
+        description: "Override mujoco version after uv sync (e.g. 3.1.6) to test render-path regression. Empty = pinned 3.3.0."
+        required: false
+        default: ""
 
 jobs:
   run:
@@ -37,7 +41,12 @@ jobs:
           PYARG=""
           if [ -n "${{ inputs.python_version }}" ]; then PYARG="--python ${{ inputs.python_version }}"; fi
           uv sync --frozen $PYARG
+          if [ -n "${{ inputs.mujoco_version }}" ]; then
+            echo "[diag] overriding mujoco -> ${{ inputs.mujoco_version }}"
+            uv pip install $PYARG "mujoco==${{ inputs.mujoco_version }}"
+          fi
           echo "[diag] venv python: $(uv run $PYARG python -c 'import sys;print(sys.version)')"
+          echo "[diag] mujoco: $(uv run $PYARG python -c 'import mujoco;print(mujoco.__version__)')"
 
       - name: GPU state (clocks / throttle / MIG / persistence)
         run: |
