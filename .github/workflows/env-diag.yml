@@ -43,7 +43,8 @@ jobs:
           uv sync --frozen $PYARG
           if [ -n "${{ inputs.mujoco_version }}" ]; then
             echo "[diag] overriding mujoco -> ${{ inputs.mujoco_version }}"
-            uv pip install $PYARG "mujoco==${{ inputs.mujoco_version }}"
+            # --no-deps + --reinstall to bypass the editable project's mujoco==3.3.0 pin.
+            uv pip install --no-deps --reinstall "mujoco==${{ inputs.mujoco_version }}"
           fi
           echo "[diag] venv python: $(uv run $PYARG python -c 'import sys;print(sys.version)')"
           echo "[diag] mujoco: $(uv run $PYARG python -c 'import mujoco;print(mujoco.__version__)')"
