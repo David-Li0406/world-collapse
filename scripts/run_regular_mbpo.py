@@ -149,6 +149,24 @@ if _RECENT:
     ReplaySegmentBuffer._sample_episode = _recent_sample_episode
 
 # ---------------------------------------------------------------------------
+# Optional frozen_wm: freeze the world model at M_0 (skip WM training updates).
+# The policy still trains on imagination from the frozen WM. Implemented by
+# making VideoPredictor.train a no-op (upstream calls it at lines 328/345).
+# ---------------------------------------------------------------------------
+if os.environ.get("WMC_FROZEN_WM", "").strip() in ("1", "true", "True"):
+    _fp = {"done": False}
+    _orig_vp_train = VideoPredictor.train
+
+    def _frozen_train(self, *args, **kwargs):
+        if not _fp["done"]:
+            print("[frozen-wm] WM training disabled (VideoPredictor.train -> no-op); "
+                  "policy still trains on frozen-WM imagination", flush=True)
+            _fp["done"] = True
+        return {}
+
+    VideoPredictor.train = _frozen_train
+
+# ---------------------------------------------------------------------------
 # Optional "our wm-policy setting": goal-bias trained/held-out (A/B) split.
 # Enabled by WMC_GOAL_BIAS_FRACTION (e.g. 0.5). Data collection is restricted to
 # region A (rand_vec dim-0 lower fraction); eval reports SR_A (trained) and SR_B

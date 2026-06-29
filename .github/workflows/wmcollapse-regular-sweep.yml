@@ -42,10 +42,18 @@ on:
         description: "Empty=full WM replay. Set (e.g. 5000) to enable collapse_prone recency-WM: WM trains only on the last N transitions."
         required: false
         default: ""
-      gpus:
-        description: "Space-separated GPU ids (round-robin over seeds)"
+      frozen_wm:
+        description: "true=freeze the WM at M_0 (no WM updates); policy still trains on frozen-WM imagination."
         required: false
-        default: "0 1 2 3 4"
+        default: "false"
+      real_ratio:
+        description: "Empty=config default (0.5). Set 0.0 for fully self-consuming (policy trains 100% on imagined data)."
+        required: false
+        default: ""
+      gpus:
+        description: "Space-separated GPU ids (capped to this many concurrent to avoid OOM)"
+        required: false
+        default: "0 1 2 3"
 
 jobs:
   run:
@@ -141,36 +149,51 @@ jobs:
           VENV="$PWD/.venv-wmc/bin/python"
           WM="$IVIDEOGPT_ROOT/pretrained_models/ivideogpt-oxe-64-act-free"
 
+          # real_ratio override (e.g. 0.0 = fully self-consuming policy)
+          RR_ARG=""
+          if [ -n "${{ inputs.real_ratio }}" ]; then RR_ARG="real_ratio=${{ inputs.real_ratio }}"; fi
+          # frozen_wm flag
+          FROZEN=""
+          if [ "${{ inputs.frozen_wm }}" = "true" ]; then FROZEN="1"; fi
+
           IFS=',' read -ra SEEDS <<< "${{ inputs.seeds }}"
           GPUS=(${{ inputs.gpus }})
-          PIDS=()
-          IDX=0
-          for seed in "${SEEDS[@]}"; do
-            GPU="${GPUS[$(( IDX % ${#GPUS[@]} ))]}"; IDX=$((IDX+1))
-            OUT="$PWD/runs/${{ inputs.run_name }}/seed${seed}"
-            mkdir -p "$OUT"
-            echo "[wmc-regular] seed=${seed} task=${{ inputs.task }} on GPU ${GPU} -> ${OUT}"
-            ( cd "$IVIDEOGPT_ROOT/mbrl" && \
-              CUDA_VISIBLE_DEVICES="${GPU}" MUJOCO_EGL_DEVICE_ID=0 EGL_DEVICE_ID=0 \
-              WMC_GOAL_BIAS_FRACTION="${{ inputs.goal_bias_fraction }}" WMC_OUT="$OUT" \
-              WMC_WM_RECENT_WINDOW="${{ inputs.wm_recent_window }}" \
-              "$VENV" -u "$GITHUB_WORKSPACE/scripts/run_regular_mbpo.py" \
-                "task@_global_=${{ inputs.task }}" \
-                seed=${seed} \
-                num_train_frames=${{ inputs.num_train_frames }} \
-                num_eval_episodes=${{ inputs.num_eval_episodes }} \
-                eval_every_frames=${{ inputs.eval_every_frames }} \
-                demo=false \
-                world_model.config_name="$IVIDEOGPT_ROOT/configs/llama/config.json" \
-                world_model.pretrained_model_name_or_path="$WM/tokenizer" \
-                world_model.pretrained_transformer_path="$WM/transformer" \
-                "hydra.run.dir=$OUT" \
-                > "$OUT/train.log" 2>&1 ) &
-            PIDS+=($!)
-          done
-          echo "[wmc-regular] launched ${#PIDS[@]} jobs; waiting..."
+          NGPU=${#GPUS[@]}
           FAIL=0
-          for pid in "${PIDS[@]}"; do wait "$pid" || FAIL=$((FAIL+1)); done
+          i=0
+          # Wave-based launch: <=NGPU seeds at once, one per distinct GPU, so
+          # we never put 2 memory-heavy MBPO processes on one GPU (OOM).
+          while [ "$i" -lt "${#SEEDS[@]}" ]; do
+            WPIDS=()
+            for j in $(seq 0 $((NGPU-1))); do
+              [ "$i" -ge "${#SEEDS[@]}" ] && break
+              seed="${SEEDS[$i]}"; GPU="${GPUS[$j]}"; i=$((i+1))
+              OUT="$PWD/runs/${{ inputs.run_name }}/seed${seed}"
+              mkdir -p "$OUT"
+              echo "[wmc-regular] seed=${seed} task=${{ inputs.task }} on GPU ${GPU} frozen=${FROZEN:-0} rr=${{ inputs.real_ratio }} -> ${OUT}"
+              ( cd "$IVIDEOGPT_ROOT/mbrl" && \
+                CUDA_VISIBLE_DEVICES="${GPU}" MUJOCO_EGL_DEVICE_ID=0 EGL_DEVICE_ID=0 \
+                WMC_GOAL_BIAS_FRACTION="${{ inputs.goal_bias_fraction }}" WMC_OUT="$OUT" \
+                WMC_WM_RECENT_WINDOW="${{ inputs.wm_recent_window }}" \
+                WMC_FROZEN_WM="${FROZEN}" \
+                "$VENV" -u "$GITHUB_WORKSPACE/scripts/run_regular_mbpo.py" \
+                  "task@_global_=${{ inputs.task }}" \
+                  seed=${seed} \
+                  num_train_frames=${{ inputs.num_train_frames }} \
+                  num_eval_episodes=${{ inputs.num_eval_episodes }} \
+                  eval_every_frames=${{ inputs.eval_every_frames }} \
+                  demo=false \
+                  ${RR_ARG} \
+                  world_model.config_name="$IVIDEOGPT_ROOT/configs/llama/config.json" \
+                  world_model.pretrained_model_name_or_path="$WM/tokenizer" \
+                  world_model.pretrained_transformer_path="$WM/transformer" \
+                  "hydra.run.dir=$OUT" \
+                  > "$OUT/train.log" 2>&1 ) &
+              WPIDS+=($!)
+            done
+            echo "[wmc-regular] wave launched ${#WPIDS[@]} jobs; waiting..."
+            for pid in "${WPIDS[@]}"; do wait "$pid" || FAIL=$((FAIL+1)); done
+          done
           echo "[wmc-regular] done. failures: $FAIL"
           if [ "$FAIL" -gt 0 ]; then exit 1; fi
 
