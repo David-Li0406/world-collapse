@@ -150,8 +150,11 @@ jobs:
           WM="$IVIDEOGPT_ROOT/pretrained_models/ivideogpt-oxe-64-act-free"
 
           # real_ratio override (e.g. 0.0 = fully self-consuming policy)
-          RR_ARG=""
-          if [ -n "${{ inputs.real_ratio }}" ]; then RR_ARG="real_ratio=${{ inputs.real_ratio }}"; fi
+          RR_ARG=""; RR_ZERO=""
+          if [ -n "${{ inputs.real_ratio }}" ]; then
+            RR_ARG="real_ratio=${{ inputs.real_ratio }}"
+            case "${{ inputs.real_ratio }}" in 0|0.0|0.00) RR_ZERO="1";; esac
+          fi
           # frozen_wm flag
           FROZEN=""
           if [ "${{ inputs.frozen_wm }}" = "true" ]; then FROZEN="1"; fi
@@ -175,7 +178,7 @@ jobs:
                 CUDA_VISIBLE_DEVICES="${GPU}" MUJOCO_EGL_DEVICE_ID=0 EGL_DEVICE_ID=0 \
                 WMC_GOAL_BIAS_FRACTION="${{ inputs.goal_bias_fraction }}" WMC_OUT="$OUT" \
                 WMC_WM_RECENT_WINDOW="${{ inputs.wm_recent_window }}" \
-                WMC_FROZEN_WM="${FROZEN}" \
+                WMC_FROZEN_WM="${FROZEN}" WMC_REAL_RATIO_ZERO="${RR_ZERO}" \
                 "$VENV" -u "$GITHUB_WORKSPACE/scripts/run_regular_mbpo.py" \
                   "task@_global_=${{ inputs.task }}" \
                   seed=${seed} \

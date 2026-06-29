@@ -242,6 +242,39 @@ def _run_biased():
     overrides = [a for a in sys.argv[1:] if not a.startswith("hydra.")]
     with initialize_config_dir(version_base=None, config_dir=cfgs_dir):
         cfg = compose(config_name="mbpo_config", overrides=overrides)
+
+    # True real_ratio=0: upstream sets the real loader to batch_size=0 (crashes)
+    # and the policy batch always mixes real. For a fully self-consuming loop we:
+    #   (1) floor the real loader to a valid size (used only for pre-start_mbpo
+    #       warmup), and (2) make the policy batch 100% IMAGINED after start_mbpo
+    #       (zero real anchor once the WM<->policy loop engages).
+    if os.environ.get("WMC_REAL_RATIO_ZERO") == "1":
+        import replay_buffer as _rb
+        _full_bs = int(cfg.batch_size)
+        _orig_mrl = _rb.make_replay_loader
+
+        def _floored_mrl(replay_dir, max_size, batch_size, *a, **k):
+            if not batch_size or batch_size <= 0:
+                batch_size = _full_bs
+            return _orig_mrl(replay_dir, max_size, batch_size, *a, **k)
+
+        _rb.make_replay_loader = _floored_mrl
+        T.make_replay_loader = _floored_mrl
+
+        def _rr0_replay_iter(self):
+            while True:
+                if self.global_step * self.cfg.action_repeat >= self.cfg.start_mbpo:
+                    if self._imag_replay_iter is None:
+                        self._imag_replay_iter = iter(self.imag_replay_loader)
+                    yield next(self._imag_replay_iter)        # 100% imagined
+                else:
+                    if self._replay_iter is None:
+                        self._replay_iter = iter(self.replay_loader)
+                    yield next(self._replay_iter)             # real warmup only
+        T.Workspace.replay_iter = property(_rr0_replay_iter)
+        print("[real-ratio-0] policy trains 100% on imagination after start_mbpo "
+              "(no real anchor in the feedback loop)", flush=True)
+
     os.chdir(out)  # Workspace uses Path.cwd() as work_dir (logs/eval here)
     ws = T.Workspace(cfg)
     ws.train()
